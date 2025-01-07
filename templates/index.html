@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BookChat - Test Page</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .message-form {
+            margin: 20px 0;
+        }
+        #message-input {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 10px;
+        }
+        #messages {
+            border: 1px solid #ccc;
+            padding: 10px;
+            min-height: 200px;
+        }
+    </style>
+</head>
+<body>
+    <h1>BookChat - Test Page</h1>
+    
+    <div class="message-form">
+        <textarea id="message-input" placeholder="Type your message here..."></textarea>
+        <button onclick="sendMessage()">Send Message</button>
+    </div>
+
+    <div id="messages">
+        <p>Loading messages...</p>
+    </div>
+
+    <script>
+        // Function to send a message
+        async function sendMessage() {
+            const input = document.getElementById('message-input');
+            const content = input.value.trim();
+            
+            if (!content) return;
+
+            try {
+                const response = await fetch('/messages', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ content })
+                });
+
+                if (response.ok) {
+                    input.value = '';
+                    loadMessages();
+                } else {
+                    console.error('Failed to send message');
+                }
+            } catch (error) {
+                console.error('Error:', error);
+            }
+        }
+
+        // Function to load messages
+        async function loadMessages() {
+            try {
+                const response = await fetch('/messages');
+                const messages = await response.json();
+                
+                const messagesDiv = document.getElementById('messages');
+                messagesDiv.innerHTML = messages.map(msg => `
+                    <div class="message">
+                        <p>${msg.content}</p>
+                        <small>${new Date(msg.timestamp).toLocaleString()}</small>
+                    </div>
+                `).join('');
+            } catch (error) {
+                console.error('Error loading messages:', error);
+            }
+        }
+
+        // Load messages when page loads
+        loadMessages();
+    </script>
+</body>
+</html>
