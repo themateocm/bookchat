@@ -3,3 +3,7 @@ PyGithub==2.1.1
 python-dotenv==1.0.0
 cryptography==41.0.7
 sqlite3-utils==3.35.2
+
+# Testing dependencies
+pytest==7.4.3
+pytest-cov==4.1.0
