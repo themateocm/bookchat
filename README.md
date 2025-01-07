@@ -1,67 +1,86 @@
-# BookChat
+# BookChat - Git-Backed Messaging Application
 
-A basic chat application that allows users to communicate in real-time.
+A lightweight, Git-backed web-based messaging application that allows users to communicate through a simple interface while maintaining message history in a Git repository.
 
 ## Features
 
-- Real-time messaging
-- Simple and intuitive user interface
-- Text-based communication
+- Simple and intuitive web interface
+- Message persistence using SQLite database
+- Git integration for message history
+- Real-time message updates
+- Basic user authentication
+- Markdown support for messages
 
-## Prerequisites
+## Tech Stack
 
-- Python 3.x
-- Web browser (Chrome, Firefox, Safari, or Edge)
-
-## Installation
-
-1. Clone the repository:
-```bash
-git clone https://github.com/yourusername/bookchat.git
-cd bookchat
-```
-
-2. Install the required dependencies:
-```bash
-pip install -r requirements.txt
-```
-
-## Usage
-
-1. Start the server:
-```bash
-python app.py
-```
-
-2. Open your web browser and navigate to:
-```
-http://localhost:5000
-```
-
-3. Begin chatting!
+- Backend: Python (No frameworks)
+- Database: SQLite
+- Frontend: HTML, CSS, JavaScript (Vanilla)
+- Version Control: Git (via GitHub API)
+- Authentication: GitHub OAuth
 
 ## Project Structure
 
 ```
 bookchat/
-├── app.py              # Main application file
-├── static/            # Static files (CSS, JavaScript)
-├── templates/         # HTML templates
-└── README.md         # This file
+├── README.md
+├── .env
+├── static/
+│   ├── css/
+│   │   └── style.css
+│   └── js/
+│       └── main.js
+├── templates/
+│   ├── index.html
+│   └── login.html
+├── database/
+│   └── schema.sql
+├── server.py
+└── requirements.txt
 ```
 
-## Contributing
+## Setup Instructions
 
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/yourusername/bookchat.git
+   cd bookchat
+   ```
+
+2. Create a virtual environment and activate it:
+   ```bash
+   python -m venv venv
+   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   ```
+
+3. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+4. Set up your GitHub OAuth application and update the `.env` file with your credentials:
+   ```
+   GITHUB_CLIENT_ID=your_client_id
+   GITHUB_CLIENT_SECRET=your_client_secret
+   SECRET_KEY=your_secret_key
+   ```
+
+5. Initialize the database:
+   ```bash
+   python server.py init-db
+   ```
+
+6. Run the application:
+   ```bash
+   python server.py
+   ```
+
+7. Open your browser and navigate to `http://localhost:8000`
+
+## Development
+
+This project is being developed incrementally with a focus on simplicity and maintainability. Each component is built without relying on heavy frameworks to maintain clarity and ease of understanding.
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Last Updated
-
-2025-01-07
+MIT License - Feel free to use this project for learning or building your own messaging application.
