@@ -8,13 +8,14 @@ import os
 from urllib.parse import parse_qs, urlparse
 from http import HTTPStatus
 from dotenv import load_dotenv
+from database.init_db import init_database
 
 # Load environment variables
 load_dotenv()
 
 # Configuration
 PORT = 8000
-DATABASE = 'database/messages.db'
+DATABASE = os.path.join('database', 'messages.db')
 
 class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
     """Custom request handler for the chat application"""
@@ -95,36 +96,28 @@ class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
 
     def save_message(self, message_data):
         """Save a new message to the database"""
-        if 'content' not in message_data:
+        required_fields = ['content']
+        if not all(field in message_data for field in required_fields):
             raise ValueError('Message content is required')
             
         with sqlite3.connect(DATABASE) as conn:
             cursor = conn.cursor()
             cursor.execute(
-                'INSERT INTO messages (content, timestamp) VALUES (?, datetime("now"))',
-                (message_data['content'],)
+                'INSERT INTO messages (content, author, parent_id) VALUES (?, ?, ?)',
+                (
+                    message_data['content'],
+                    message_data.get('author', 'anonymous'),
+                    message_data.get('parent_id', None)
+                )
             )
             conn.commit()
-
-def init_database():
-    """Initialize the database with required tables"""
-    os.makedirs(os.path.dirname(DATABASE), exist_ok=True)
-    
-    with sqlite3.connect(DATABASE) as conn:
-        cursor = conn.cursor()
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS messages (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                content TEXT NOT NULL,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        conn.commit()
 
 def main():
     """Main function to start the server"""
     # Initialize the database
-    init_database()
+    if not init_database():
+        print("Failed to initialize database. Exiting.")
+        return
     
     # Create the HTTP server
     handler = ChatRequestHandler
