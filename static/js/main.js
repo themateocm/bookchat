@@ -1,39 +1,50 @@
-// Main JavaScript for BookChat
+// BookChat JavaScript v1.0.0 (2025-01-08T12:22:56-05:00)
+
+const VERSION = {
+    number: '1.0.0',
+    timestamp: '2025-01-08T12:22:56-05:00'
+};
 
 document.addEventListener('DOMContentLoaded', function() {
-    // Clear the "Loading messages..." text when the page loads
-    document.getElementById('messages').innerHTML = '';
     loadMessages();
+    updateVersionInfo();
+    // Update version age every second
+    setInterval(updateVersionInfo, 1000);
 });
 
-async function sendMessage() {
-    const messageInput = document.getElementById('message-input');
-    const message = messageInput.value.trim();
+function updateVersionInfo() {
+    const versionDiv = document.getElementById('version-info');
+    const now = new Date();
+    const versionDate = new Date(VERSION.timestamp);
+    const ageInSeconds = Math.floor((now - versionDate) / 1000);
     
-    if (!message) return;
-
-    try {
-        const response = await fetch('/messages', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ content: message })
-        });
-
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-        }
-
-        // Clear the input after successful send
-        messageInput.value = '';
-        
-        // Reload messages to show the new one
-        await loadMessages();
-    } catch (error) {
-        console.error('Error sending message:', error);
-        alert('Failed to send message. Please try again.');
+    let ageText;
+    if (ageInSeconds < 60) {
+        ageText = `${ageInSeconds} seconds ago`;
+    } else if (ageInSeconds < 3600) {
+        const minutes = Math.floor(ageInSeconds / 60);
+        ageText = `${minutes} minute${minutes === 1 ? '' : 's'} ago`;
+    } else {
+        const hours = Math.floor(ageInSeconds / 3600);
+        ageText = `${hours} hour${hours === 1 ? '' : 's'} ago`;
     }
+    
+    versionDiv.innerHTML = `
+        <div>Version: ${VERSION.number}</div>
+        <div>Built: ${ageText}</div>
+        <div class="version-time">${VERSION.timestamp}</div>
+    `;
+}
+
+function ensureScrollToBottom() {
+    const messagesDiv = document.getElementById('messages');
+    // Request an animation frame to ensure DOM is updated
+    requestAnimationFrame(() => {
+        // Double-check in next frame to handle any late updates
+        requestAnimationFrame(() => {
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        });
+    });
 }
 
 async function loadMessages() {
@@ -46,6 +57,9 @@ async function loadMessages() {
         const messages = await response.json();
         const messagesDiv = document.getElementById('messages');
         messagesDiv.innerHTML = '';
+
+        // Create document fragment for better performance
+        const fragment = document.createDocumentFragment();
 
         messages.forEach(msg => {
             const messageElement = document.createElement('div');
@@ -76,11 +90,45 @@ async function loadMessages() {
             content.textContent = msg.content;
             messageElement.appendChild(content);
             
-            messagesDiv.appendChild(messageElement);
+            fragment.appendChild(messageElement);
         });
+
+        // Batch DOM updates by using fragment
+        messagesDiv.appendChild(fragment);
+        ensureScrollToBottom();
     } catch (error) {
         console.error('Error loading messages:', error);
         document.getElementById('messages').innerHTML = '<p>Error loading messages</p>';
+    }
+}
+
+async function sendMessage() {
+    const messageInput = document.getElementById('message-input');
+    const message = messageInput.value.trim();
+    
+    if (!message) return;
+
+    try {
+        const response = await fetch('/messages', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ content: message })
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        // Clear the input after successful send
+        messageInput.value = '';
+        
+        // Reload messages
+        await loadMessages();
+    } catch (error) {
+        console.error('Error sending message:', error);
+        alert('Failed to send message. Please try again.');
     }
 }
 
@@ -91,3 +139,6 @@ document.getElementById('message-input').addEventListener('keypress', function(e
         sendMessage();
     }
 });
+
+// Add event listener for send button
+document.getElementById('send-button').addEventListener('click', sendMessage);

@@ -3,21 +3,22 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>BookChat - Test Page</title>
+    <title>BookChat</title>
     <link rel="stylesheet" href="/static/css/style.css">
 </head>
 <body>
-    <h1>BookChat - Test Page</h1>
-    
-    <div class="message-form">
-        <textarea id="message-input" placeholder="Type your message here..."></textarea>
-        <button onclick="sendMessage()">Send Message</button>
+    <div class="container">
+        <div id="version-info" class="version-info"></div>
+        <div id="messages">
+            <p>Loading messages...</p>
+        </div>
+        <div class="message-form">
+            <div class="message-input-container">
+                <textarea id="message-input" placeholder="Type your message here..." rows="1"></textarea>
+                <button id="send-button">Send</button>
+            </div>
+        </div>
     </div>
-
-    <div id="messages">
-        <p>Loading messages...</p>
-    </div>
-
     <script src="/static/js/main.js"></script>
 </body>
 </html>
