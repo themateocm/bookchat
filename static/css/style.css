@@ -1,72 +1,36 @@
 /* Main styles for BookChat */
 
 body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-    line-height: 1.6;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     margin: 0;
-    padding: 20px;
-    background-color: #f5f5f5;
-    color: #333;
-}
-
-h1 {
-    text-align: center;
-    color: #2c3e50;
-    margin-bottom: 30px;
-}
-
-.message-form {
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    background: white;
-    padding: 20px;
-    box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.1);
+    height: 100vh;
     display: flex;
-    gap: 10px;
+    flex-direction: column;
+    background: #f5f5f5;
 }
 
-#message-input {
+.container {
     flex: 1;
-    padding: 12px;
-    border: 1px solid #ddd;
-    border-radius: 4px;
-    font-size: 16px;
-    resize: none;
-    min-height: 20px;
-    max-height: 150px;
-}
-
-button {
-    background-color: #2c3e50;
-    color: white;
-    border: none;
-    padding: 12px 24px;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 16px;
-    transition: background-color 0.2s;
-}
-
-button:hover {
-    background-color: #34495e;
+    display: flex;
+    flex-direction: column;
+    width: 100%;
 }
 
 #messages {
-    margin-bottom: 100px; /* Space for fixed message form */
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
+    flex: 1;
+    overflow-y: auto;
+    background: #fff;
+    padding: 20px;
+    scroll-behavior: smooth;
 }
 
 .message {
-    background: white;
-    padding: 15px;
+    background: #f8f9fa;
     border-radius: 8px;
-    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
-    max-width: 80%;
-    word-wrap: break-word;
+    padding: 12px;
+    margin: 0 auto 12px;
+    max-width: 800px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
 }
 
 .message-header {
@@ -94,12 +58,12 @@ button:hover {
 }
 
 .signature-status.verified {
-    background-color: #4CAF50;
+    background: #4CAF50;
     color: white;
 }
 
 .signature-status.unverified {
-    background-color: #FFC107;
+    background: #FFC107;
     color: #333;
 }
 
@@ -108,21 +72,65 @@ button:hover {
     word-break: break-word;
 }
 
+.message-form {
+    position: sticky;
+    bottom: 0;
+    background: #f5f5f5;
+    padding: 20px;
+    border-top: 1px solid #eee;
+}
+
+.message-input-container {
+    display: flex;
+    gap: 10px;
+    max-width: 800px;
+    margin: 0 auto;
+}
+
+#message-input {
+    flex: 1;
+    padding: 12px;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    font-size: 14px;
+    resize: none;
+    min-height: 44px;
+    max-height: 200px;
+    background: #fff;
+}
+
+#message-input:focus {
+    outline: none;
+    border-color: #007bff;
+    box-shadow: 0 0 0 2px rgba(0,123,255,0.25);
+}
+
+#send-button {
+    padding: 0 20px;
+    background: #007bff;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: 500;
+    transition: background-color 0.2s;
+}
+
+#send-button:hover {
+    background: #0056b3;
+}
+
+#send-button:active {
+    background: #004085;
+}
+
 /* Responsive design */
 @media (max-width: 600px) {
-    body {
+    #messages, .message-form {
         padding: 10px;
     }
     
     .message {
-        max-width: 90%;
-    }
-    
-    .message-form {
-        padding: 10px;
-    }
-    
-    button {
-        padding: 10px 20px;
+        margin-bottom: 10px;
     }
 }
