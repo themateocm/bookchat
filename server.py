@@ -107,7 +107,9 @@ class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
                                 'id': filename,
                                 'content': content,
                                 'author': metadata.get('Author', 'anonymous'),
-                                'date': metadata.get('Date')
+                                'date': metadata.get('Date'),
+                                'verified': metadata.get('Verified'),
+                                'signed': 'Signature' in metadata
                             })
                         except Exception as e:
                             print(f"Error reading message {filename}: {e}")
@@ -129,7 +131,8 @@ class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
             # Save the message using GitManager
             filename = git_manager.save_message(
                 message_data['content'],
-                message_data.get('author', 'anonymous')
+                message_data.get('author', 'anonymous'),
+                sign=message_data.get('sign', True)  # Sign by default
             )
             return filename
         except Exception as e:
@@ -150,7 +153,7 @@ def find_available_port(start_port=8000, max_attempts=100):
 def open_browser(port):
     """Open Windows Chrome browser through WSL"""
     try:
-        os.system(f'cmd.exe /C start chrome http://localhost:{port}')
+        os.system(f'cmd.exe /C start chrome --new-window http://localhost:{port}')
     except Exception as e:
         print(f"Failed to open browser: {e}")
 

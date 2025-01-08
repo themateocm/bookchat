@@ -50,7 +50,32 @@ async function loadMessages() {
         messages.forEach(msg => {
             const messageElement = document.createElement('div');
             messageElement.className = 'message';
-            messageElement.textContent = msg.content;
+            
+            // Create message header with author and signature status
+            const header = document.createElement('div');
+            header.className = 'message-header';
+            
+            const author = document.createElement('span');
+            author.className = 'message-author';
+            author.textContent = msg.author;
+            header.appendChild(author);
+            
+            if (msg.signed) {
+                const signatureStatus = document.createElement('span');
+                signatureStatus.className = `signature-status ${msg.verified === 'true' ? 'verified' : 'unverified'}`;
+                signatureStatus.title = msg.verified === 'true' ? 'Signature verified' : 'Signature could not be verified';
+                signatureStatus.textContent = msg.verified === 'true' ? '✓' : '?';
+                header.appendChild(signatureStatus);
+            }
+            
+            messageElement.appendChild(header);
+            
+            // Add message content
+            const content = document.createElement('div');
+            content.className = 'message-content';
+            content.textContent = msg.content;
+            messageElement.appendChild(content);
+            
             messagesDiv.appendChild(messageElement);
         });
     } catch (error) {

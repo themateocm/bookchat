@@ -6,6 +6,35 @@ from datetime import datetime
 from pathlib import Path
 from github import Github
 
+class KeyManager:
+    def __init__(self, keys_dir):
+        self.keys_dir = Path(keys_dir)
+        self.keys_dir.mkdir(parents=True, exist_ok=True)
+        self.private_key_path = self.keys_dir / 'local.pem'
+        self.public_key_path = self.keys_dir / 'local.pub'
+        
+        # Generate key pair if it doesn't exist
+        if not self.private_key_path.exists():
+            subprocess.run(['openssl', 'genrsa', '-out', str(self.private_key_path), '2048'], check=True)
+            subprocess.run(['openssl', 'rsa', '-pubout', '-in', str(self.private_key_path), '-out', str(self.public_key_path)], check=True)
+    
+    def sign_message(self, message):
+        # Sign message with private key
+        signature = subprocess.run(['openssl', 'dgst', '-sha256', '-sign', str(self.private_key_path)], input=message.encode(), capture_output=True, check=True).stdout
+        return signature.hex()
+    
+    def verify_signature(self, message, signature, public_key_pem):
+        # Verify signature with public key
+        public_key_path = self.keys_dir / 'temp.pub'
+        public_key_path.write_text(public_key_pem)
+        result = subprocess.run(['openssl', 'dgst', '-sha256', '-verify', str(public_key_path), '-signature', signature], input=message.encode(), capture_output=True, check=True).returncode
+        public_key_path.unlink()
+        return result == 0
+    
+    def export_public_key(self, filepath):
+        # Export public key to file
+        subprocess.run(['cp', str(self.public_key_path), str(filepath)], check=True)
+
 class GitManager:
     def __init__(self, repo_path):
         """Initialize GitManager with repository path and GitHub credentials."""
@@ -13,6 +42,10 @@ class GitManager:
         self.token = os.environ.get('GITHUB_TOKEN')
         self.repo_name = os.environ.get('GITHUB_REPO')
         self.should_sync_to_github = os.environ.get('SYNC_TO_GITHUB', '').lower() == 'true'
+        
+        # Initialize key manager
+        keys_dir = os.environ.get('KEYS_DIR', str(self.repo_path / 'keys'))
+        self.key_manager = KeyManager(keys_dir)
         
         # Make GitHub optional
         self.use_github = bool(self.token and self.repo_name and self.should_sync_to_github)
@@ -25,6 +58,14 @@ class GitManager:
             # Initialize git repository if needed
             if not (self.repo_path / '.git').exists():
                 self.init_git_repo()
+            
+            # Export public key to repo if it doesn't exist
+            public_key_repo_path = self.repo_path / 'public_keys' / 'local.pub'
+            if not public_key_repo_path.exists():
+                public_key_repo_path.parent.mkdir(parents=True, exist_ok=True)
+                self.key_manager.export_public_key(public_key_repo_path)
+                if self.use_github:
+                    self.sync_changes_to_github(public_key_repo_path, "System")
         else:
             print("GitHub synchronization disabled")
         
@@ -87,13 +128,15 @@ class GitManager:
         if not gitkeep_path.exists():
             gitkeep_path.touch()
 
-    def format_message(self, message_content, author, date_str, parent_id=None):
+    def format_message(self, message_content, author, date_str, parent_id=None, signature=None):
         """Format a message with metadata headers."""
         header = []
         header.append(f"Date: {date_str}")
         header.append(f"Author: {author}")
         if parent_id:
             header.append(f"Parent-Message: {parent_id}")
+        if signature:
+            header.append(f"Signature: {signature}")
         
         # Join headers and add blank line before content
         return "\n".join(header) + "\n\n" + message_content
@@ -118,7 +161,23 @@ class GitManager:
         
         return metadata, message
 
-    def save_message(self, message_content, author, parent_id=None, date_str=None):
+    def verify_message(self, content, metadata):
+        """Verify message signature if present."""
+        signature = metadata.get('Signature')
+        if not signature:
+            return None  # Message is not signed
+            
+        # Try to find author's public key
+        author = metadata.get('Author', 'anonymous')
+        public_key_path = self.repo_path / 'public_keys' / f'{author}.pub'
+        
+        if not public_key_path.exists():
+            return False  # Can't verify - no public key
+            
+        public_key_pem = public_key_path.read_text()
+        return self.key_manager.verify_signature(content, signature, public_key_pem)
+
+    def save_message(self, message_content, author, parent_id=None, date_str=None, sign=True):
         """Save a message to a file and optionally sync to GitHub."""
         # Ensure messages directory exists
         self.ensure_repo_exists()
@@ -127,13 +186,24 @@ class GitManager:
         if date_str is None:
             date_str = datetime.now().isoformat()
         
+        # Sign message if requested
+        signature = None
+        if sign:
+            signature = self.key_manager.sign_message(message_content)
+        
         # Create a timestamped filename
         timestamp = datetime.fromisoformat(date_str).strftime('%Y%m%d_%H%M%S')
         filename = f'{timestamp}_{author}.txt'
         filepath = self.messages_dir / filename
         
         # Format message with metadata
-        formatted_message = self.format_message(message_content, author, date_str, parent_id)
+        formatted_message = self.format_message(
+            message_content, 
+            author, 
+            date_str, 
+            parent_id,
+            signature
+        )
         
         # Write message to file
         filepath.write_text(formatted_message)
@@ -151,7 +221,14 @@ class GitManager:
             raise FileNotFoundError(f"Message file not found: {filename}")
         
         content = filepath.read_text()
-        return self.parse_message(content)
+        metadata, message = self.parse_message(content)
+        
+        # Add verification status to metadata
+        verification = self.verify_message(message, metadata)
+        if verification is not None:
+            metadata['Verified'] = 'true' if verification else 'false'
+        
+        return metadata, message
 
 def main():
     """Main function for testing"""

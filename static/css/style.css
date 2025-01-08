@@ -69,6 +69,45 @@ button:hover {
     word-wrap: break-word;
 }
 
+.message-header {
+    display: flex;
+    align-items: center;
+    margin-bottom: 5px;
+    font-size: 0.9em;
+    color: #666;
+}
+
+.message-author {
+    font-weight: bold;
+    margin-right: 8px;
+}
+
+.signature-status {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    font-size: 12px;
+    margin-left: 4px;
+}
+
+.signature-status.verified {
+    background-color: #4CAF50;
+    color: white;
+}
+
+.signature-status.unverified {
+    background-color: #FFC107;
+    color: #333;
+}
+
+.message-content {
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
 /* Responsive design */
 @media (max-width: 600px) {
     body {
