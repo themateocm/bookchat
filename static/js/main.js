@@ -46,23 +46,38 @@ async function loadMessages() {
         
         const messages = await response.json();
         const messagesDiv = document.getElementById('messages');
-        const messagesContainer = document.createElement('div');
-        messagesContainer.id = 'messages-container';
-        messagesDiv.innerHTML = '';
-        messagesDiv.appendChild(messagesContainer);
-
-        messages.forEach(msg => {
-            const messageElement = createMessageElement(msg);
-            messagesContainer.appendChild(messageElement);
-        });
-
+        const messagesContainer = document.getElementById('messages-container');
+        messagesContainer.innerHTML = '';
+        
+        // Sort messages by date
+        messages.sort((a, b) => new Date(a.date) - new Date(b.date));
+        
+        // Track username changes and errors
+        let currentUsername = 'anonymous';
+        for (const message of messages) {
+            if (message.type === 'username_change' && message.verified === 'true') {
+                try {
+                    const content = JSON.parse(message.content);
+                    if (content.old_username === currentUsername) {
+                        currentUsername = content.new_username;
+                    }
+                } catch (e) {
+                    console.error('Failed to parse username change:', e);
+                }
+            }
+            messagesContainer.appendChild(createMessageElement(message));
+        }
+        
+        // Update current username display
+        const usernameDisplay = document.getElementById('current-username');
+        if (usernameDisplay) {
+            usernameDisplay.textContent = `Current username: ${currentUsername}`;
+        }
+        
         // Scroll to bottom
         messagesDiv.scrollTop = messagesDiv.scrollHeight;
-        
     } catch (error) {
         console.error('Error loading messages:', error);
-        const messagesDiv = document.getElementById('messages');
-        messagesDiv.innerHTML = '<p class="error">Error loading messages. Please try again later.</p>';
     }
 }
 
@@ -141,38 +156,49 @@ async function sendMessage(content, type = 'message') {
     }
 }
 
+// Username validation regex - only allow alphanumeric and underscore, 3-20 chars
+const USERNAME_REGEX = /^[a-zA-Z0-9_]{3,20}$/;
+
 async function changeUsername(newUsername) {
-    // Clean and validate the new username
-    newUsername = newUsername.trim();
-    
-    if (!newUsername) {
-        return false;
-    }
-    
-    // If it's the same username, just return success
-    if (newUsername === currentUsername) {
-        return true;
-    }
-    
     try {
-        // Send username change request as a special message
-        const result = await sendMessage(JSON.stringify({
-            new_username: newUsername,
-            old_username: currentUsername
-        }), 'username_change');
-        
-        // Wait a bit for the change to process
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        
-        // Verify the username change with the server
-        const verified = await verifyUsername();
-        if (!verified) {
+        // Validate username format
+        if (!USERNAME_REGEX.test(newUsername)) {
+            alert('Username must be 3-20 characters long and contain only letters, numbers, and underscores.');
             return false;
         }
         
-        // Refresh messages to show the change
-        await loadMessages();
-        return true;
+        // First verify if username exists
+        const messages = await fetch('/messages').then(r => r.json());
+        const existingChange = messages.find(m => 
+            m.type === 'username_change' && 
+            JSON.parse(m.content).new_username === newUsername
+        );
+        
+        if (existingChange) {
+            alert('This username is already taken. Please choose another one.');
+            return false;
+        }
+        
+        // Proceed with username change
+        const content = JSON.stringify({
+            old_username: currentUsername,
+            new_username: newUsername
+        });
+        
+        const success = await sendMessage(content, 'username_change');
+        if (success) {
+            currentUsername = newUsername;
+            localStorage.setItem('username', newUsername);
+            
+            // Update display
+            const usernameDisplay = document.getElementById('current-username');
+            if (usernameDisplay) {
+                usernameDisplay.textContent = `Current username: ${newUsername}`;
+            }
+            
+            return true;
+        }
+        return false;
     } catch (error) {
         console.error('Error changing username:', error);
         return false;
@@ -181,30 +207,19 @@ async function changeUsername(newUsername) {
 
 // Add username change UI
 function setupUsernameUI() {
-    const header = document.createElement('div');
-    header.className = 'header';
-    
-    const usernameDisplay = document.createElement('span');
-    usernameDisplay.textContent = `Current username: ${currentUsername}`;
-    usernameDisplay.id = 'current-username';
-    
-    const changeButton = document.createElement('button');
-    changeButton.textContent = 'Change Username';
-    changeButton.onclick = async () => {
-        const newUsername = prompt('Enter new username:');
-        if (newUsername) {
-            const success = await changeUsername(newUsername);
-            if (!success) {
-                alert('Failed to change username. Please try a different username.');
+    // Set up change username button click handler
+    const changeButton = document.getElementById('change-username-btn');
+    if (changeButton) {
+        changeButton.onclick = async () => {
+            const newUsername = prompt('Enter new username:');
+            if (newUsername) {
+                const success = await changeUsername(newUsername);
+                if (!success) {
+                    alert('Failed to change username. Please try a different username.');
+                }
             }
-        }
-    };
-    
-    header.appendChild(usernameDisplay);
-    header.appendChild(changeButton);
-    
-    const container = document.querySelector('.container');
-    container.insertBefore(header, container.firstChild);
+        };
+    }
 }
 
 function setupMessageInput() {

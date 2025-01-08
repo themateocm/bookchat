@@ -121,3 +121,12 @@ body {
     border-radius: 4px;
     cursor: pointer;
 }
+
+/* JS/no-JS visibility */
+.nojs-only {
+    display: none;
+}
+
+.js-only {
+    display: block;
+}

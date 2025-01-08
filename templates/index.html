@@ -5,20 +5,46 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>BookChat</title>
     <link rel="stylesheet" href="/static/css/style.css">
+    <noscript>
+        <link rel="stylesheet" href="/static/css/noscript.css">
+    </noscript>
 </head>
 <body>
     <div class="container">
-        <div id="version-info" class="version-info"></div>
-        <div id="messages">
-            <p>Loading messages...</p>
+        <!-- Header with username -->
+        <div class="header">
+            <span id="current-username">Current username: anonymous</span>
+            <!-- No-JS username change form -->
+            <form method="POST" action="/username" class="nojs-only">
+                <input type="text" name="new_username" placeholder="New username" required>
+                <button type="submit">Change Username</button>
+            </form>
+            <!-- JS-only button -->
+            <button id="change-username-btn" class="js-only">Change Username</button>
         </div>
-        <div class="message-form">
-            <div class="message-input-container">
-                <textarea id="message-input" placeholder="Type your message here..." rows="1"></textarea>
-                <button id="send-button">Send</button>
+
+        <!-- Messages container -->
+        <div id="messages">
+            <!-- No-JS refresh form -->
+            <form method="GET" action="/" class="nojs-only refresh-form">
+                <button type="submit">Refresh Messages</button>
+            </form>
+            <div id="messages-container">
+                <p>Loading messages...</p>
             </div>
         </div>
+
+        <!-- Message input -->
+        <div class="message-form">
+            <!-- No-JS message form -->
+            <form method="POST" action="/messages" class="message-input-container">
+                <textarea id="message-input" name="content" placeholder="Type your message here..." rows="1" required></textarea>
+                <button type="submit" id="send-button">Send</button>
+            </form>
+        </div>
     </div>
+
+    <!-- Load JavaScript last -->
     <script src="/static/js/main.js"></script>
 </body>
 </html>
