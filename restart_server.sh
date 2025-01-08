@@ -1,10 +1,13 @@
 #!/bin/bash
 
-# Kill any existing server processes
-pkill -f "python server.py" || true
+# Kill any existing Python processes running server.py
+pkill -f "python3 server.py"
 
-# Wait a moment to ensure the port is released
+# Wait a moment for the port to be freed
 sleep 1
 
-# Start the server
-python server.py
+# Start the server in the background
+python3 server.py &
+
+# Exit successfully
+exit 0
