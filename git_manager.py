@@ -5,6 +5,7 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 from github import Github
+import json
 
 class KeyManager:
     def __init__(self, keys_dir):
@@ -150,7 +151,7 @@ class GitManager:
         if not gitkeep_path.exists():
             gitkeep_path.touch()
 
-    def format_message(self, message_content, author, date_str, parent_id=None, signature=None):
+    def format_message(self, message_content, author, date_str, parent_id=None, signature=None, message_type=None):
         """Format a message with metadata headers."""
         header = []
         header.append(f"Date: {date_str}")
@@ -159,6 +160,8 @@ class GitManager:
             header.append(f"Parent-Message: {parent_id}")
         if signature:
             header.append(f"Signature: {signature}")
+        if message_type:
+            header.append(f"Type: {message_type}")
         
         # Join headers and add blank line before content
         return "\n".join(header) + "\n\n" + message_content
@@ -202,7 +205,38 @@ class GitManager:
         except ValueError:
             return False  # Invalid signature format
 
-    def save_message(self, message_content, author="anonymous", parent_id=None, date_str=None, sign=True):
+    def handle_username_change(self, old_username, new_username, message_id):
+        """Handle username change request after verification"""
+        try:
+            # Move the public key file
+            old_key_path = self.repo_path / 'public_keys' / f'{old_username}.pub'
+            new_key_path = self.repo_path / 'public_keys' / f'{new_username}.pub'
+            
+            if not old_key_path.exists():
+                return False, "Old username's public key not found"
+                
+            if new_key_path.exists():
+                return False, "New username already exists"
+            
+            # Read the message to verify it's a valid username change request
+            message = self.read_message(message_id)
+            if not message:
+                return False, "Message not found"
+                
+            if message['type'] != 'username_change' or not message['verified']:
+                return False, "Invalid or unverified username change request"
+                
+            if message['author'] != old_username:
+                return False, "Username mismatch"
+                
+            # Move the public key file
+            old_key_path.rename(new_key_path)
+            
+            return True, "Username changed successfully"
+        except Exception as e:
+            return False, str(e)
+
+    def save_message(self, message_content, author="anonymous", parent_id=None, date_str=None, sign=True, message_type=None):
         """Save a message to a file and optionally sync to GitHub."""
         # Ensure messages directory exists
         self.ensure_repo_exists()
@@ -227,11 +261,34 @@ class GitManager:
             author, 
             date_str, 
             parent_id=parent_id,
-            signature=signature
+            signature=signature,
+            message_type=message_type
         )
         
         # Write message to file
         filepath.write_text(formatted_message)
+        
+        # Handle username change if this is a username change message
+        if message_type == 'username_change':
+            try:
+                new_username = json.loads(message_content)['new_username']
+                success, msg = self.handle_username_change(author, new_username, filename)
+                if not success:
+                    # If username change failed, add error message
+                    error_msg = self.save_message(
+                        f"Username change failed: {msg}",
+                        "system",
+                        parent_id=filename,
+                        message_type="error"
+                    )
+            except (json.JSONDecodeError, KeyError) as e:
+                # If message format is invalid, add error message
+                error_msg = self.save_message(
+                    f"Invalid username change message format: {e}",
+                    "system",
+                    parent_id=filename,
+                    message_type="error"
+                )
         
         # Sync to GitHub if enabled
         if self.use_github:
@@ -259,7 +316,8 @@ class GitManager:
             'date': metadata.get('Date'),
             'parent_id': metadata.get('Parent-Message'),
             'signed': 'Signature' in metadata,
-            'verified': metadata['verified']
+            'verified': metadata['verified'],
+            'type': metadata.get('Type', 'message')
         }
 
 def main():

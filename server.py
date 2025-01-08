@@ -126,7 +126,9 @@ class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
             filename = git_manager.save_message(
                 message_data['content'],
                 message_data.get('author', 'anonymous'),
-                sign=message_data.get('sign', True)  # Sign by default
+                parent_id=message_data.get('parent_id'),
+                sign=message_data.get('sign', True),  # Sign by default
+                message_type=message_data.get('type')
             )
             return filename
         except Exception as e:
