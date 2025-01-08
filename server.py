@@ -3,19 +3,22 @@
 import http.server
 import socketserver
 import json
-import sqlite3
 import os
 from urllib.parse import parse_qs, urlparse
 from http import HTTPStatus
 from dotenv import load_dotenv
-from database.init_db import init_database
+from git_manager import GitManager
 
 # Load environment variables
 load_dotenv()
 
 # Configuration
-PORT = 8000
-DATABASE = os.path.join('database', 'messages.db')
+PORT = int(os.getenv('PORT', 8000))
+REPO_PATH = os.getenv('REPO_PATH', os.path.abspath(os.path.dirname(__file__)))
+
+# Initialize GitManager
+git_manager = GitManager(REPO_PATH)
+git_manager.ensure_repo_exists()
 
 class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
     """Custom request handler for the chat application"""
@@ -76,9 +79,21 @@ class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
             self.send_error(HTTPStatus.NOT_FOUND)
 
     def serve_messages(self):
-        """Serve all messages from the database as JSON"""
+        """Serve all messages from the messages directory as JSON"""
         try:
-            messages = self.get_messages()
+            messages = []
+            message_files = sorted(os.listdir(git_manager.messages_dir))
+            for filename in message_files:
+                if filename != '.gitkeep':
+                    metadata, content = git_manager.read_message(filename)
+                    messages.append({
+                        'id': filename,
+                        'content': content,
+                        'author': metadata.get('Author', 'anonymous'),
+                        'date': metadata.get('Date'),
+                        'parent_id': metadata.get('Parent-Message')
+                    })
+            
             self.send_response(HTTPStatus.OK)
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
@@ -86,38 +101,24 @@ class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
         except Exception as e:
             self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR, str(e))
 
-    def get_messages(self):
-        """Retrieve all messages from the database"""
-        with sqlite3.connect(DATABASE) as conn:
-            cursor = conn.cursor()
-            cursor.execute('SELECT id, content, timestamp FROM messages ORDER BY timestamp DESC')
-            messages = cursor.fetchall()
-            return [{'id': m[0], 'content': m[1], 'timestamp': m[2]} for m in messages]
-
     def save_message(self, message_data):
-        """Save a new message to the database"""
+        """Save a new message using GitManager"""
         required_fields = ['content']
         if not all(field in message_data for field in required_fields):
             raise ValueError('Message content is required')
-            
-        with sqlite3.connect(DATABASE) as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                'INSERT INTO messages (content, author, parent_id) VALUES (?, ?, ?)',
-                (
-                    message_data['content'],
-                    message_data.get('author', 'anonymous'),
-                    message_data.get('parent_id', None)
-                )
-            )
-            conn.commit()
+
+        # Save the message using GitManager
+        git_manager.save_message(
+            message_data['content'],
+            message_data.get('author', 'anonymous'),
+            message_data.get('parent_id'),
+            date_str=message_data.get('date')  # Use provided date if available
+        )
 
 def main():
     """Main function to start the server"""
-    # Initialize the database
-    if not init_database():
-        print("Failed to initialize database. Exiting.")
-        return
+    print(f"Repository path: {REPO_PATH}")
+    print(f"Messages directory: {git_manager.messages_dir}")
     
     # Create the HTTP server
     handler = ChatRequestHandler
