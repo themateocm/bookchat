@@ -102,15 +102,9 @@ class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
                 for filename in message_files:
                     if filename != '.gitkeep':
                         try:
-                            metadata, content = git_manager.read_message(filename)
-                            messages.append({
-                                'id': filename,
-                                'content': content,
-                                'author': metadata.get('Author', 'anonymous'),
-                                'date': metadata.get('Date'),
-                                'verified': metadata.get('Verified'),
-                                'signed': 'Signature' in metadata
-                            })
+                            message = git_manager.read_message(filename)
+                            if message:
+                                messages.append(message)
                         except Exception as e:
                             print(f"Error reading message {filename}: {e}")
             
@@ -159,25 +153,21 @@ def open_browser(port):
 
 def main():
     """Start the server"""
-    global git_manager
-
     # Find an available port
-    port = find_available_port(PORT)
-    if port != PORT:
-        print(f"Port {PORT} was in use, using port {port} instead")
-
+    port = find_available_port()
+    
+    # Create and configure the server
     handler = ChatRequestHandler
+    httpd = socketserver.TCPServer(("", port), handler)
+    
+    print(f"Starting server on port {port}...")
     
     try:
-        with socketserver.TCPServer(("", port), handler) as httpd:
-            print(f"Repository path: {REPO_PATH}")
-            print(f"Messages directory: {git_manager.messages_dir}")
-            print(f"Server running at http://localhost:{port}")
-            
-            # Open browser after server starts
-            open_browser(port)
-            
-            httpd.serve_forever()
+        # Open the browser
+        open_browser(port)
+        
+        # Start the server
+        httpd.serve_forever()
     except KeyboardInterrupt:
         print("\nShutting down server...")
         httpd.server_close()

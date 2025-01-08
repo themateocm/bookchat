@@ -23,13 +23,34 @@ class KeyManager:
         signature = subprocess.run(['openssl', 'dgst', '-sha256', '-sign', str(self.private_key_path)], input=message.encode(), capture_output=True, check=True).stdout
         return signature.hex()
     
-    def verify_signature(self, message, signature, public_key_pem):
-        # Verify signature with public key
-        public_key_path = self.keys_dir / 'temp.pub'
-        public_key_path.write_text(public_key_pem)
-        result = subprocess.run(['openssl', 'dgst', '-sha256', '-verify', str(public_key_path), '-signature', signature], input=message.encode(), capture_output=True, check=True).returncode
-        public_key_path.unlink()
-        return result == 0
+    def verify_signature(self, message, signature_hex, public_key_pem):
+        # Write signature to temp file
+        sig_path = self.keys_dir / 'temp.sig'
+        try:
+            # Convert hex signature back to bytes and write to file
+            signature_bytes = bytes.fromhex(signature_hex)
+            sig_path.write_bytes(signature_bytes)
+            
+            # Write public key to temp file
+            pub_path = self.keys_dir / 'temp.pub'
+            pub_path.write_text(public_key_pem)
+            
+            # Verify signature
+            result = subprocess.run(
+                ['openssl', 'dgst', '-sha256', '-verify', str(pub_path), '-signature', str(sig_path)],
+                input=message.encode(),
+                capture_output=True
+            )
+            return result.returncode == 0
+        except (ValueError, subprocess.CalledProcessError) as e:
+            print(f"Signature verification failed: {e}")
+            return False
+        finally:
+            # Clean up temp files
+            if sig_path.exists():
+                sig_path.unlink()
+            if pub_path.exists():
+                pub_path.unlink()
     
     def export_public_key(self, filepath):
         # Export public key to file
@@ -58,20 +79,21 @@ class GitManager:
             # Initialize git repository if needed
             if not (self.repo_path / '.git').exists():
                 self.init_git_repo()
-            
-            # Export public key to repo if it doesn't exist
-            public_key_repo_path = self.repo_path / 'public_keys' / 'local.pub'
-            if not public_key_repo_path.exists():
-                public_key_repo_path.parent.mkdir(parents=True, exist_ok=True)
-                self.key_manager.export_public_key(public_key_repo_path)
-                if self.use_github:
-                    self.sync_changes_to_github(public_key_repo_path, "System")
         else:
             print("GitHub synchronization disabled")
         
         # Set up messages directory path
         self.messages_dir = self.repo_path / 'messages'
         self.messages_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Export public key for anonymous users
+        public_keys_dir = self.repo_path / 'public_keys'
+        public_keys_dir.mkdir(parents=True, exist_ok=True)
+        self.key_manager.export_public_key(public_keys_dir / 'anonymous.pub')
+        
+        # Sync public key if GitHub is enabled
+        if self.use_github:
+            self.sync_changes_to_github(public_keys_dir / 'anonymous.pub', "System")
 
     def init_git_repo(self):
         """Initialize git repository and set up remote."""
@@ -174,10 +196,13 @@ class GitManager:
         if not public_key_path.exists():
             return False  # Can't verify - no public key
             
-        public_key_pem = public_key_path.read_text()
-        return self.key_manager.verify_signature(content, signature, public_key_pem)
+        try:
+            public_key_pem = public_key_path.read_text()
+            return self.key_manager.verify_signature(content, signature, public_key_pem)
+        except ValueError:
+            return False  # Invalid signature format
 
-    def save_message(self, message_content, author, parent_id=None, date_str=None, sign=True):
+    def save_message(self, message_content, author="anonymous", parent_id=None, date_str=None, sign=True):
         """Save a message to a file and optionally sync to GitHub."""
         # Ensure messages directory exists
         self.ensure_repo_exists()
@@ -201,8 +226,8 @@ class GitManager:
             message_content, 
             author, 
             date_str, 
-            parent_id,
-            signature
+            parent_id=parent_id,
+            signature=signature
         )
         
         # Write message to file
@@ -211,24 +236,31 @@ class GitManager:
         # Sync to GitHub if enabled
         if self.use_github:
             self.sync_changes_to_github(filepath, author)
-        
+            
         return filename
 
     def read_message(self, filename):
         """Read a message from a file."""
         filepath = self.messages_dir / filename
         if not filepath.exists():
-            raise FileNotFoundError(f"Message file not found: {filename}")
-        
+            return None
+            
         content = filepath.read_text()
         metadata, message = self.parse_message(content)
         
-        # Add verification status to metadata
-        verification = self.verify_message(message, metadata)
-        if verification is not None:
-            metadata['Verified'] = 'true' if verification else 'false'
+        # Verify signature if present
+        verified = self.verify_message(message, metadata)
+        metadata['verified'] = str(verified if verified is not None else False).lower()
         
-        return metadata, message
+        return {
+            'id': filename,
+            'content': message,
+            'author': metadata.get('Author', 'anonymous'),
+            'date': metadata.get('Date'),
+            'parent_id': metadata.get('Parent-Message'),
+            'signed': 'Signature' in metadata,
+            'verified': metadata['verified']
+        }
 
 def main():
     """Main function for testing"""
