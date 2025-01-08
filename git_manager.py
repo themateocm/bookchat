@@ -6,6 +6,8 @@ from datetime import datetime
 from pathlib import Path
 from github import Github
 import json
+import re
+import shutil
 
 class KeyManager:
     def __init__(self, keys_dir):
@@ -208,37 +210,36 @@ class GitManager:
     def handle_username_change(self, old_username, new_username, message_id):
         """Handle username change request after verification"""
         try:
-            # Move the public key file
-            old_key_path = self.repo_path / 'public_keys' / f'{old_username}.pub'
+            # Validate new username format
+            USERNAME_REGEX = re.compile(r'^[a-zA-Z0-9_]{3,20}$')
+            if not USERNAME_REGEX.match(new_username):
+                return False, "Username must be 3-20 characters long and contain only letters, numbers, and underscores"
+            
+            # Check if new username already exists
             new_key_path = self.repo_path / 'public_keys' / f'{new_username}.pub'
-            
-            if not old_key_path.exists():
-                return False, "Old username's public key not found"
-            
-            # If it's the same username, consider it a success
-            if old_username == new_username:
-                return True, "Username unchanged"
-                
             if new_key_path.exists():
                 return False, "New username already exists"
             
-            # Read the message to verify it's a valid username change request
-            message = self.read_message(message_id)
-            if not message:
-                return False, "Message not found"
-                
-            if message['type'] != 'username_change' or not message['verified']:
-                return False, "Invalid or unverified username change request"
-                
-            if message['author'] != old_username:
-                return False, "Username mismatch"
-                
-            # Move the public key file
-            old_key_path.rename(new_key_path)
+            # Get old key path
+            old_key_path = self.repo_path / 'public_keys' / f'{old_username}.pub'
+            if not old_key_path.exists():
+                return False, "Old username public key not found"
             
-            return True, "Username changed successfully"
+            try:
+                # Move the public key file
+                shutil.move(str(old_key_path), str(new_key_path))
+                
+                # Sync to GitHub if enabled
+                if self.use_github:
+                    self.sync_changes_to_github(new_key_path, new_username)
+                
+                return True, "Username changed successfully"
+            except OSError as e:
+                # If move fails, return error
+                return False, f"Failed to update username: {str(e)}"
+                
         except Exception as e:
-            return False, str(e)
+            return False, f"Username change failed: {str(e)}"
 
     def save_message(self, message_content, author="anonymous", parent_id=None, date_str=None, sign=True, message_type=None):
         """Save a message to a file and optionally sync to GitHub."""
