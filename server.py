@@ -62,27 +62,77 @@ class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
 
     def do_POST(self):
         """Handle POST requests"""
-        parsed_path = urlparse(self.path)
-        
-        if parsed_path.path == '/messages':
-            # Handle new message submission
-            content_length = int(self.headers.get('Content-Length', 0))
-            post_data = self.rfile.read(content_length)
+        try:
+            parsed_path = urlparse(self.path)
             
-            try:
-                message_data = json.loads(post_data.decode('utf-8'))
-                filename = self.save_message(message_data)
+            # Handle messages
+            if parsed_path.path == '/messages':
+                # Get content length
+                content_length = int(self.headers['Content-Length'])
                 
-                # Send success response
-                self.send_response(HTTPStatus.CREATED)
-                self.send_header('Content-Type', 'application/json')
+                # Read and parse the body
+                body = self.rfile.read(content_length).decode('utf-8')
+                
+                # Handle both JSON and form data
+                if self.headers.get('Content-Type') == 'application/json':
+                    data = json.loads(body)
+                    content = data.get('content')
+                    author = data.get('author', 'anonymous')
+                    message_type = data.get('type', 'message')
+                else:
+                    # Parse form data
+                    form_data = parse_qs(body)
+                    content = form_data.get('content', [''])[0]
+                    author = 'anonymous'  # No-JS always uses anonymous
+                    message_type = 'message'
+                
+                # Save the message
+                message = git_manager.save_message(content, author, message_type=message_type)
+                
+                # Return response based on content type
+                if self.headers.get('Content-Type') == 'application/json':
+                    self.send_response(HTTPStatus.OK)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(json.dumps(message).encode('utf-8'))
+                else:
+                    # Redirect back to home page for form submission
+                    self.send_response(HTTPStatus.FOUND)
+                    self.send_header('Location', '/')
+                    self.end_headers()
+            
+            # Handle username changes
+            elif parsed_path.path == '/username':
+                content_length = int(self.headers['Content-Length'])
+                body = self.rfile.read(content_length).decode('utf-8')
+                
+                # Parse form data
+                form_data = parse_qs(body)
+                new_username = form_data.get('new_username', [''])[0]
+                
+                if new_username:
+                    # Create username change message
+                    content = json.dumps({
+                        'old_username': 'anonymous',
+                        'new_username': new_username
+                    })
+                    message = git_manager.save_message(
+                        content, 
+                        'anonymous',
+                        message_type='username_change'
+                    )
+                
+                # Redirect back to home page
+                self.send_response(HTTPStatus.FOUND)
+                self.send_header('Location', '/')
                 self.end_headers()
-                self.wfile.write(json.dumps({'status': 'success', 'id': filename}).encode('utf-8'))
-            except Exception as e:
-                # Send error response
-                self.send_error(HTTPStatus.BAD_REQUEST, str(e))
-        else:
-            self.send_error(HTTPStatus.NOT_FOUND)
+            
+            else:
+                self.send_error(HTTPStatus.NOT_FOUND)
+                
+        except Exception as e:
+            print(f"Error handling POST request: {e}")
+            self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR, str(e))
 
     def serve_file(self, filepath, content_type):
         """Helper method to serve a file with specified content type"""
