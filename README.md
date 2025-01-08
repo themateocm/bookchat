@@ -71,9 +71,22 @@ bookchat/
    ```
 
 6. Run the application:
+   You can start the server in two ways:
+
+   1. Direct start:
    ```bash
    python server.py
    ```
+
+   2. Using the restart script (recommended):
+   ```bash
+   ./restart_server.sh
+   ```
+
+   The restart script will automatically:
+   - Stop any existing server instances
+   - Wait for the port to be released
+   - Start a new server instance
 
 7. Open your browser and navigate to `http://localhost:8000`
 
