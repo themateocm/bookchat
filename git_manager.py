@@ -214,6 +214,10 @@ class GitManager:
             
             if not old_key_path.exists():
                 return False, "Old username's public key not found"
+            
+            # If it's the same username, consider it a success
+            if old_username == new_username:
+                return True, "Username unchanged"
                 
             if new_key_path.exists():
                 return False, "New username already exists"

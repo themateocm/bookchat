@@ -4,6 +4,7 @@ import http.server
 import socketserver
 import json
 import os
+import pathlib
 from urllib.parse import parse_qs, urlparse
 from http import HTTPStatus
 from dotenv import load_dotenv
@@ -52,6 +53,9 @@ class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
         elif parsed_path.path == '/messages':
             # Return all messages as JSON
             self.serve_messages()
+        elif parsed_path.path == '/verify_username':
+            # Verify and return the current username
+            self.verify_username()
         else:
             # Try to serve static files
             super().do_GET()
@@ -134,6 +138,47 @@ class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
         except Exception as e:
             print(f"Error saving message: {e}")
             raise
+
+    def verify_username(self):
+        """Verify and return the current username based on public key"""
+        try:
+            # Get the most recent username change message
+            messages = []
+            if os.path.exists(git_manager.messages_dir):
+                message_files = sorted(os.listdir(git_manager.messages_dir))
+                for filename in reversed(message_files):  # Start from newest
+                    if filename != '.gitkeep':
+                        message = git_manager.read_message(filename)
+                        if message and message['type'] == 'username_change' and message['verified'] == 'true':
+                            try:
+                                data = json.loads(message['content'])
+                                username = data['new_username']
+                                # Verify the public key exists
+                                key_path = git_manager.repo_path / 'public_keys' / f'{username}.pub'
+                                if key_path.exists():
+                                    self.send_response(HTTPStatus.OK)
+                                    self.send_header('Content-Type', 'application/json')
+                                    self.end_headers()
+                                    self.wfile.write(json.dumps({
+                                        'username': username,
+                                        'status': 'verified'
+                                    }).encode('utf-8'))
+                                    return
+                            except (json.JSONDecodeError, KeyError):
+                                continue
+            
+            # If no verified username found, return anonymous
+            self.send_response(HTTPStatus.OK)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                'username': 'anonymous',
+                'status': 'default'
+            }).encode('utf-8'))
+            
+        except Exception as e:
+            print(f"Error verifying username: {e}")
+            self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR, str(e))
 
 def find_available_port(start_port=8000, max_attempts=100):
     """Find an available port starting from start_port"""

@@ -1,10 +1,41 @@
 // BookChat JavaScript (2025-01-08T12:20:30-05:00)
 
+let currentUsername = 'anonymous';
+
+// Initialize everything
 document.addEventListener('DOMContentLoaded', async () => {
+    await verifyUsername();
     setupMessageInput();
     setupUsernameUI();
     await loadMessages();
 });
+
+async function verifyUsername() {
+    try {
+        const response = await fetch('/verify_username');
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        const data = await response.json();
+        currentUsername = data.username;
+        
+        // Update localStorage with the verified username
+        localStorage.setItem('username', currentUsername);
+        
+        // Update UI if it exists
+        const usernameDisplay = document.getElementById('current-username');
+        if (usernameDisplay) {
+            usernameDisplay.textContent = `Current username: ${currentUsername}`;
+        }
+        
+        return data.status === 'verified';
+    } catch (error) {
+        console.error('Error verifying username:', error);
+        // Fall back to stored username or anonymous
+        currentUsername = localStorage.getItem('username') || 'anonymous';
+        return false;
+    }
+}
 
 async function loadMessages() {
     try {
@@ -12,31 +43,26 @@ async function loadMessages() {
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
         }
-
+        
         const messages = await response.json();
         const messagesDiv = document.getElementById('messages');
-        
-        // Clear messages
-        messagesDiv.innerHTML = '';
-        
-        // Create messages container that will hold all messages
         const messagesContainer = document.createElement('div');
-        messagesContainer.className = 'messages-container';
-        messagesContainer.style.marginTop = 'auto'; // Push messages to bottom initially
+        messagesContainer.id = 'messages-container';
+        messagesDiv.innerHTML = '';
+        messagesDiv.appendChild(messagesContainer);
 
         messages.forEach(msg => {
             const messageElement = createMessageElement(msg);
             messagesContainer.appendChild(messageElement);
         });
 
-        // Add all messages at once
-        messagesDiv.appendChild(messagesContainer);
-        
         // Scroll to bottom
         messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        
     } catch (error) {
         console.error('Error loading messages:', error);
-        document.getElementById('messages').innerHTML = '<p>Error loading messages</p>';
+        const messagesDiv = document.getElementById('messages');
+        messagesDiv.innerHTML = '<p class="error">Error loading messages. Please try again later.</p>';
     }
 }
 
@@ -59,14 +85,31 @@ function createMessageElement(message) {
     const contentDiv = document.createElement('div');
     contentDiv.className = 'content';
     
-    // Handle system messages differently
+    // Handle different message types
     if (message.type === 'error') {
         contentDiv.classList.add('error');
+        contentDiv.textContent = message.content;
     } else if (message.type === 'system') {
         contentDiv.classList.add('system');
+        contentDiv.textContent = message.content;
+    } else if (message.type === 'username_change') {
+        contentDiv.classList.add('username-change');
+        try {
+            const data = JSON.parse(message.content);
+            contentDiv.innerHTML = `
+                <div class="username-change-icon">👤</div>
+                <div class="username-change-text">
+                    Changed username from <span class="old-username">${data.old_username}</span> 
+                    to <span class="new-username">${data.new_username}</span>
+                </div>
+            `;
+        } catch (e) {
+            contentDiv.textContent = message.content;
+        }
+    } else {
+        contentDiv.textContent = message.content;
     }
     
-    contentDiv.textContent = message.content;
     messageDiv.appendChild(contentDiv);
     
     return messageDiv;
@@ -82,7 +125,7 @@ async function sendMessage(content, type = 'message') {
             body: JSON.stringify({
                 content,
                 type,
-                author: currentUsername || 'anonymous'
+                author: currentUsername
             })
         });
         
@@ -98,11 +141,17 @@ async function sendMessage(content, type = 'message') {
     }
 }
 
-let currentUsername = 'anonymous';
-
 async function changeUsername(newUsername) {
-    if (!newUsername || newUsername === currentUsername) {
+    // Clean and validate the new username
+    newUsername = newUsername.trim();
+    
+    if (!newUsername) {
         return false;
+    }
+    
+    // If it's the same username, just return success
+    if (newUsername === currentUsername) {
+        return true;
     }
     
     try {
@@ -115,17 +164,14 @@ async function changeUsername(newUsername) {
         // Wait a bit for the change to process
         await new Promise(resolve => setTimeout(resolve, 1000));
         
-        // Refresh messages to see the result
-        await loadMessages();
-        
-        // Update current username if no error message was received
-        const messages = document.querySelectorAll('.message');
-        const lastMessage = messages[messages.length - 1];
-        if (lastMessage && lastMessage.querySelector('.content.error')) {
+        // Verify the username change with the server
+        const verified = await verifyUsername();
+        if (!verified) {
             return false;
         }
         
-        currentUsername = newUsername;
+        // Refresh messages to show the change
+        await loadMessages();
         return true;
     } catch (error) {
         console.error('Error changing username:', error);
@@ -148,8 +194,8 @@ function setupUsernameUI() {
         const newUsername = prompt('Enter new username:');
         if (newUsername) {
             const success = await changeUsername(newUsername);
-            if (success) {
-                usernameDisplay.textContent = `Current username: ${currentUsername}`;
+            if (!success) {
+                alert('Failed to change username. Please try a different username.');
             }
         }
     };
@@ -157,19 +203,35 @@ function setupUsernameUI() {
     header.appendChild(usernameDisplay);
     header.appendChild(changeButton);
     
-    const chat = document.getElementById('chat');
-    chat.parentNode.insertBefore(header, chat);
+    const container = document.querySelector('.container');
+    container.insertBefore(header, container.firstChild);
 }
 
 function setupMessageInput() {
-    document.getElementById('message-input').addEventListener('keypress', function(e) {
+    const messageInput = document.getElementById('message-input');
+    
+    async function sendAndClear() {
+        const content = messageInput.value.trim();
+        if (content) {
+            try {
+                await sendMessage(content);
+                messageInput.value = '';
+                await loadMessages();
+                // Ensure scroll to bottom after sending
+                const messagesDiv = document.getElementById('messages');
+                messagesDiv.scrollTop = messagesDiv.scrollHeight;
+            } catch (error) {
+                console.error('Failed to send message:', error);
+            }
+        }
+    }
+    
+    messageInput.addEventListener('keypress', function(e) {
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
-            sendMessage(document.getElementById('message-input').value.trim());
+            sendAndClear();
         }
     });
 
-    document.getElementById('send-button').addEventListener('click', () => {
-        sendMessage(document.getElementById('message-input').value.trim());
-    });
+    document.getElementById('send-button').addEventListener('click', sendAndClear);
 }
