@@ -37,3 +37,4 @@ wheels/
 .vscode/
 *.swp
 *.swo
+.aider*
