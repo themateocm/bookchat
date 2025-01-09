@@ -236,6 +236,62 @@ class ChatRequestHandler(SimpleHTTPRequestHandler):
             self._send_json({'status': 'success', 'id': filename})
 ```
 
+## Additional Requirements
+
+### Git Integration
+- Messages should be backed up to a Git repository
+- Support both local Git and GitHub sync
+- Environment variables:
+  - `GITHUB_TOKEN`: GitHub API token
+  - `GITHUB_REPO`: Repository name
+  - `SYNC_TO_GITHUB`: Set to 'true' to enable GitHub sync
+  - `KEYS_DIR`: Directory for storing keys (default: repo/keys)
+
+### Database Integration
+- Use SQLite for message persistence
+- Schema should include:
+  - Messages table with timestamp, author, content
+  - Users table for authentication
+  - Support for message threading and replies
+
+### Security Enhancements
+- Support GitHub OAuth for authentication
+- Store sensitive data in `.env` file:
+  ```
+  GITHUB_CLIENT_ID=your_client_id
+  GITHUB_CLIENT_SECRET=your_client_secret
+  SECRET_KEY=your_secret_key
+  ```
+
+### Frontend Features
+- Real-time message updates
+- Markdown support for messages
+- Progressive enhancement:
+  - Work without JavaScript
+  - Enhanced features with JavaScript
+  - Separate CSS for no-JS fallback
+
+### Project Structure
+```
+bookchat/
+├── README.md
+├── .env
+├── static/
+│   ├── css/
+│   │   ├── style.css
+│   │   └── noscript.css
+│   └── js/
+│       └── main.js
+├── templates/
+│   ├── index.html
+│   └── login.html
+├── database/
+│   ├── init_db.py
+│   └── schema.sql
+├── git_manager.py
+└── requirements.txt
+```
+
 ## Implementation Notes
 1. Default to 'anonymous' user if no username set
 2. Verify signatures before username changes
