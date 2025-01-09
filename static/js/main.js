@@ -149,6 +149,10 @@ async function sendMessage(content, type = 'message') {
         }
         
         const result = await response.json();
+        
+        // Reload messages to show the new message
+        await loadMessages();
+        
         return result;
     } catch (error) {
         console.error('Error sending message:', error);
@@ -223,30 +227,30 @@ function setupUsernameUI() {
 }
 
 function setupMessageInput() {
-    const messageInput = document.getElementById('message-input');
-    
-    async function sendAndClear() {
-        const content = messageInput.value.trim();
-        if (content) {
-            try {
-                await sendMessage(content);
-                messageInput.value = '';
-                await loadMessages();
-                // Ensure scroll to bottom after sending
-                const messagesDiv = document.getElementById('messages');
-                messagesDiv.scrollTop = messagesDiv.scrollHeight;
-            } catch (error) {
-                console.error('Failed to send message:', error);
-            }
-        }
+    // Hide no-JS form and show JS form
+    const noJsForm = document.getElementById('message-form');
+    const jsForm = document.getElementById('js-message-form');
+    if (noJsForm && jsForm) {
+        noJsForm.style.display = 'none';
+        jsForm.style.display = 'flex';
     }
     
-    messageInput.addEventListener('keypress', function(e) {
-        if (e.key === 'Enter' && !e.shiftKey) {
+    const messageForm = document.getElementById('js-message-form');
+    const messageInput = document.getElementById('message-input');
+    
+    if (messageForm && messageInput) {
+        messageForm.addEventListener('submit', async (e) => {
             e.preventDefault();
-            sendAndClear();
-        }
-    });
-
-    document.getElementById('send-button').addEventListener('click', sendAndClear);
+            const content = messageInput.value.trim();
+            if (content) {
+                try {
+                    await sendMessage(content);
+                    messageInput.value = '';
+                } catch (error) {
+                    console.error('Failed to send message:', error);
+                    alert('Failed to send message. Please try again.');
+                }
+            }
+        });
+    }
 }

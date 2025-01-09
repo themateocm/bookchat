@@ -5,10 +5,38 @@ import socketserver
 import json
 import os
 import pathlib
+import logging
+import traceback
+import re
+from datetime import datetime
 from urllib.parse import parse_qs, urlparse
 from http import HTTPStatus
 from dotenv import load_dotenv
-from git_manager import GitManager
+from storage.factory import create_storage
+
+# Configure logging with a more detailed format
+log_format = '%(asctime)s - %(name)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s'
+
+# Remove all existing handlers
+root = logging.getLogger()
+if root.handlers:
+    for handler in root.handlers:
+        root.removeHandler(handler)
+
+# Configure root logger
+handler = logging.StreamHandler()
+handler.setFormatter(logging.Formatter(log_format))
+root.addHandler(handler)
+root.setLevel(logging.DEBUG)
+
+# Configure module loggers
+for name in ['storage', 'storage.git_storage', 'storage.factory', 'git_manager']:
+    logger = logging.getLogger(name)
+    logger.setLevel(logging.DEBUG)
+    # Don't add handlers to child loggers
+    logger.propagate = True
+
+logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
@@ -17,9 +45,17 @@ load_dotenv()
 PORT = int(os.getenv('PORT', 8000))
 REPO_PATH = os.getenv('REPO_PATH', os.path.abspath(os.path.dirname(__file__)))
 
-# Initialize GitManager
-git_manager = GitManager(REPO_PATH)
-git_manager.ensure_repo_exists()
+# Initialize storage backend
+logger.info(f"Initializing storage backend with repo path: {REPO_PATH}")
+storage = create_storage(storage_type='git', repo_path=REPO_PATH)
+
+# Log all loggers and their levels
+logger.debug("Current logger levels:")
+for name in logging.root.manager.loggerDict:
+    log = logging.getLogger(name)
+    logger.debug(f"Logger {name}: level={logging.getLevelName(log.level)}, handlers={log.handlers}, propagate={log.propagate}")
+
+storage.init_storage()
 
 class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
     """Custom request handler for the chat application"""
@@ -28,83 +64,118 @@ class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
         # Set the directory for serving static files
         super().__init__(*args, directory="static", **kwargs)
 
+    def handle_error(self, error):
+        """Handle errors and return appropriate response"""
+        error_msg = f"Error occurred: {error}\n{traceback.format_exc()}"
+        logger.error(error_msg)
+        error_response = {
+            'error': str(error),
+            'traceback': traceback.format_exc()
+        }
+        self.send_response(HTTPStatus.INTERNAL_SERVER_ERROR)
+        self.send_header('Content-Type', 'application/json')
+        self.end_headers()
+        self.wfile.write(json.dumps(error_response).encode('utf-8'))
+
     def do_GET(self):
         """Handle GET requests"""
-        parsed_path = urlparse(self.path)
-        
-        if parsed_path.path == '/':
-            # Serve the main page
-            self.serve_file('templates/index.html', 'text/html')
-        elif parsed_path.path.startswith('/static/'):
-            # Handle static files directly
-            try:
-                # Remove the leading '/static/' to get the relative path
-                file_path = parsed_path.path[8:]  # len('/static/') == 8
-                with open(os.path.join('static', file_path), 'rb') as f:
-                    content = f.read()
-                    self.send_response(HTTPStatus.OK)
-                    content_type = 'text/css' if file_path.endswith('.css') else 'application/javascript'
-                    self.send_header('Content-Type', content_type)
-                    self.send_header('Content-Length', str(len(content)))
-                    self.end_headers()
-                    self.wfile.write(content)
-            except FileNotFoundError:
-                self.send_error(HTTPStatus.NOT_FOUND)
-        elif parsed_path.path == '/messages':
-            # Return all messages as JSON
-            self.serve_messages()
-        elif parsed_path.path == '/verify_username':
-            # Verify and return the current username
-            self.verify_username()
-        else:
-            # Try to serve static files
-            super().do_GET()
+        try:
+            parsed_path = urlparse(self.path)
+            logger.debug(f"GET request to {parsed_path.path}")
+            
+            if parsed_path.path == '/':
+                # Serve the main page
+                self.serve_file('templates/index.html', 'text/html')
+            elif parsed_path.path.startswith('/static/'):
+                # Handle static files directly
+                try:
+                    # Remove the leading '/static/' to get the relative path
+                    file_path = parsed_path.path[8:]  # len('/static/') == 8
+                    with open(os.path.join('static', file_path), 'rb') as f:
+                        content = f.read()
+                        self.send_response(HTTPStatus.OK)
+                        content_type = 'text/css' if file_path.endswith('.css') else 'application/javascript'
+                        self.send_header('Content-Type', content_type)
+                        self.send_header('Content-Length', str(len(content)))
+                        self.end_headers()
+                        self.wfile.write(content)
+                except FileNotFoundError:
+                    logger.error(f"Static file not found: {file_path}")
+                    self.send_error(HTTPStatus.NOT_FOUND)
+            elif parsed_path.path == '/messages':
+                # Return all messages as JSON
+                self.serve_messages()
+            elif parsed_path.path == '/verify_username':
+                # Verify and return the current username
+                self.verify_username()
+            else:
+                # Try to serve static files
+                super().do_GET()
+        except Exception as e:
+            self.handle_error(e)
 
     def do_POST(self):
         """Handle POST requests"""
         try:
             parsed_path = urlparse(self.path)
+            logger.debug(f"POST request to {parsed_path.path}")
             
             # Handle messages
             if parsed_path.path == '/messages':
                 # Get content length
-                content_length = int(self.headers['Content-Length'])
+                content_length = int(self.headers.get('Content-Length', 0))
                 
                 # Read and parse the body
                 body = self.rfile.read(content_length).decode('utf-8')
+                logger.info(f"Received message body: {body}")
                 
                 # Handle both JSON and form data
                 if self.headers.get('Content-Type') == 'application/json':
                     data = json.loads(body)
                     content = data.get('content')
                     author = data.get('author', 'anonymous')
-                    message_type = data.get('type', 'message')
+                    logger.info(f"Processing JSON message from {author}: {content}")
                 else:
                     # Parse form data
                     form_data = parse_qs(body)
                     content = form_data.get('content', [''])[0]
                     author = 'anonymous'  # No-JS always uses anonymous
-                    message_type = 'message'
+                    logger.info(f"Processing form message from {author}: {content}")
                 
                 # Save the message
-                message = git_manager.save_message(content, author, message_type=message_type)
+                logger.debug("Attempting to save message...")
+                try:
+                    success = storage.save_message(author, content, datetime.now())
+                    logger.info(f"Message save {'successful' if success else 'failed'}")
+                except Exception as e:
+                    logger.error(f"Exception while saving message: {e}\n{traceback.format_exc()}")
+                    success = False
                 
-                # Return response based on content type
-                if self.headers.get('Content-Type') == 'application/json':
-                    self.send_response(HTTPStatus.OK)
-                    self.send_header('Content-Type', 'application/json')
-                    self.end_headers()
-                    self.wfile.write(json.dumps(message).encode('utf-8'))
+                if success:
+                    # Get the latest messages to return the new message
+                    messages = storage.get_messages(limit=1)
+                    new_message = messages[0] if messages else None
+                    logger.info(f"Retrieved new message: {new_message}")
+                    
+                    # Return response based on content type
+                    if self.headers.get('Content-Type') == 'application/json':
+                        self.send_response(HTTPStatus.OK)
+                        self.send_header('Content-Type', 'application/json')
+                        self.end_headers()
+                        self.wfile.write(json.dumps(new_message).encode('utf-8'))
+                    else:
+                        # Redirect back to home page for form submission
+                        self.send_response(HTTPStatus.FOUND)
+                        self.send_header('Location', '/')
+                        self.end_headers()
                 else:
-                    # Redirect back to home page for form submission
-                    self.send_response(HTTPStatus.FOUND)
-                    self.send_header('Location', '/')
-                    self.end_headers()
+                    raise Exception("Failed to save message")
             
             # Handle username changes
             elif parsed_path.path == '/username':
-                content_length = int(self.headers['Content-Length'])
+                content_length = int(self.headers.get('Content-Length', 0))
                 body = self.rfile.read(content_length).decode('utf-8')
+                logger.debug(f"Username change request: {body}")
                 
                 # Parse form data
                 form_data = parse_qs(body)
@@ -114,13 +185,10 @@ class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
                     # Create username change message
                     content = json.dumps({
                         'old_username': 'anonymous',
-                        'new_username': new_username
+                        'new_username': new_username,
+                        'type': 'username_change'
                     })
-                    message = git_manager.save_message(
-                        content, 
-                        'anonymous',
-                        message_type='username_change'
-                    )
+                    storage.save_message('system', content, datetime.now())
                 
                 # Redirect back to home page
                 self.send_response(HTTPStatus.FOUND)
@@ -131,103 +199,75 @@ class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
                 self.send_error(HTTPStatus.NOT_FOUND)
                 
         except Exception as e:
-            print(f"Error handling POST request: {e}")
-            self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR, str(e))
+            self.handle_error(e)
 
     def serve_file(self, filepath, content_type):
         """Helper method to serve a file with specified content type"""
         try:
             with open(filepath, 'rb') as f:
                 content = f.read()
-                self.send_response(HTTPStatus.OK)
-                self.send_header('Content-Type', content_type)
-                self.send_header('Content-Length', str(len(content)))
-                self.end_headers()
-                self.wfile.write(content)
+            self.send_response(HTTPStatus.OK)
+            self.send_header('Content-Type', content_type)
+            self.send_header('Content-Length', str(len(content)))
+            self.end_headers()
+            self.wfile.write(content)
         except FileNotFoundError:
+            logger.error(f"File not found: {filepath}")
             self.send_error(HTTPStatus.NOT_FOUND)
+        except Exception as e:
+            logger.error(f"Error serving file {filepath}: {e}")
+            self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR)
 
     def serve_messages(self):
-        """Serve all messages from the messages directory as JSON"""
+        """Helper method to serve messages as JSON"""
         try:
-            messages = []
-            if os.path.exists(git_manager.messages_dir):
-                message_files = sorted(os.listdir(git_manager.messages_dir))
-                for filename in message_files:
-                    if filename != '.gitkeep':
-                        try:
-                            message = git_manager.read_message(filename)
-                            if message:
-                                messages.append(message)
-                        except Exception as e:
-                            print(f"Error reading message {filename}: {e}")
-            
+            messages = storage.get_messages()
             self.send_response(HTTPStatus.OK)
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
             self.wfile.write(json.dumps(messages).encode('utf-8'))
         except Exception as e:
-            print(f"Error serving messages: {e}")
+            logger.error(f"Error serving messages: {e}")
             self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR, str(e))
 
-    def save_message(self, message_data):
-        """Save a new message using GitManager"""
-        if 'content' not in message_data:
-            raise ValueError('Message content is required')
-
-        try:
-            # Save the message using GitManager
-            filename = git_manager.save_message(
-                message_data['content'],
-                message_data.get('author', 'anonymous'),
-                parent_id=message_data.get('parent_id'),
-                sign=message_data.get('sign', True),  # Sign by default
-                message_type=message_data.get('type')
-            )
-            return filename
-        except Exception as e:
-            print(f"Error saving message: {e}")
-            raise
-
     def verify_username(self):
-        """Verify and return the current username based on public key"""
+        """Helper method to verify username"""
         try:
-            # Get the most recent username change message
-            messages = []
-            if os.path.exists(git_manager.messages_dir):
-                message_files = sorted(os.listdir(git_manager.messages_dir))
-                for filename in reversed(message_files):  # Start from newest
-                    if filename != '.gitkeep':
-                        message = git_manager.read_message(filename)
-                        if message and message['type'] == 'username_change' and message['verified'] == 'true':
-                            try:
-                                data = json.loads(message['content'])
-                                username = data['new_username']
-                                # Verify the public key exists
-                                key_path = git_manager.repo_path / 'public_keys' / f'{username}.pub'
-                                if key_path.exists():
-                                    self.send_response(HTTPStatus.OK)
-                                    self.send_header('Content-Type', 'application/json')
-                                    self.end_headers()
-                                    self.wfile.write(json.dumps({
-                                        'username': username,
-                                        'status': 'verified'
-                                    }).encode('utf-8'))
-                                    return
-                            except (json.JSONDecodeError, KeyError):
-                                continue
+            # For GET requests, just return anonymous
+            if self.command == 'GET':
+                self.send_response(HTTPStatus.OK)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    'username': 'anonymous',
+                    'valid': True,
+                    'status': 'verified'
+                }).encode('utf-8'))
+                return
             
-            # If no verified username found, return anonymous
+            # For POST requests, validate the username
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(content_length).decode('utf-8')
+            data = json.loads(body)
+            
+            # Get username from request
+            username = data.get('username', '')
+            logger.debug(f"Verifying username: {username}")
+            
+            # Check if username is valid (3-20 characters, alphanumeric and underscores only)
+            is_valid = bool(re.match(r'^[a-zA-Z0-9_]{3,20}$', username))
+            
+            # Send response
             self.send_response(HTTPStatus.OK)
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
             self.wfile.write(json.dumps({
-                'username': 'anonymous',
-                'status': 'default'
+                'username': username,
+                'valid': is_valid,
+                'status': 'verified'
             }).encode('utf-8'))
-            
         except Exception as e:
-            print(f"Error verifying username: {e}")
+            logger.error(f"Error verifying username: {e}")
             self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR, str(e))
 
 def find_available_port(start_port=8000, max_attempts=100):
@@ -235,39 +275,39 @@ def find_available_port(start_port=8000, max_attempts=100):
     for port in range(start_port, start_port + max_attempts):
         try:
             with socketserver.TCPServer(("", port), None) as s:
-                # If we can bind to the port, it's available
+                s.server_close()
                 return port
         except OSError:
             continue
     raise RuntimeError(f"Could not find an available port after {max_attempts} attempts")
 
 def open_browser(port):
-    """Open Windows Chrome browser through WSL"""
+    """Open the browser to the application URL"""
     try:
         os.system(f'cmd.exe /C start chrome --new-window http://localhost:{port}')
     except Exception as e:
-        print(f"Failed to open browser: {e}")
+        logger.error(f"Failed to open browser: {e}")
 
 def main():
     """Start the server"""
-    # Find an available port
-    port = find_available_port()
-    
-    # Create and configure the server
-    handler = ChatRequestHandler
-    httpd = socketserver.TCPServer(("", port), handler)
-    
-    print(f"Starting server on port {port}...")
-    
     try:
-        # Open the browser
-        open_browser(port)
+        port = find_available_port()
+        logger.info(f"Found available port: {port}")
         
-        # Start the server
-        httpd.serve_forever()
+        # Create and start the server
+        with socketserver.TCPServer(("", port), ChatRequestHandler) as httpd:
+            logger.info(f"Server running on port {port}...")
+            
+            # Open the browser
+            open_browser(port)
+            
+            # Start serving
+            httpd.serve_forever()
     except KeyboardInterrupt:
-        print("\nShutting down server...")
-        httpd.server_close()
+        logger.info("\nShutting down server...")
+    except Exception as e:
+        logger.error(f"Error starting server: {e}")
+        raise
 
 if __name__ == "__main__":
     main()

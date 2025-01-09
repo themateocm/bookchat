@@ -130,3 +130,20 @@ body {
 .js-only {
     display: block;
 }
+
+/* Base styles */
+.js .nojs-only {
+    display: none;
+}
+
+.js .js-only {
+    display: block;
+}
+
+.nojs-only {
+    display: flex;
+}
+
+.js-only {
+    display: none;
+}

@@ -8,6 +8,10 @@
     <noscript>
         <link rel="stylesheet" href="/static/css/noscript.css">
     </noscript>
+    <script>
+        // Mark page as JavaScript-enabled
+        document.documentElement.className = 'js';
+    </script>
 </head>
 <body>
     <div class="container">
@@ -37,8 +41,13 @@
         <!-- Message input -->
         <div class="message-form">
             <!-- No-JS message form -->
-            <form method="POST" action="/messages" class="message-input-container">
-                <textarea id="message-input" name="content" placeholder="Type your message here..." rows="1" required></textarea>
+            <form id="message-form" method="POST" action="/messages" class="message-input-container nojs-only">
+                <textarea name="content" placeholder="Type your message here..." rows="1" required></textarea>
+                <button type="submit">Send</button>
+            </form>
+            <!-- JS message form -->
+            <form id="js-message-form" class="message-input-container js-only">
+                <textarea id="message-input" placeholder="Type your message here..." rows="1" required></textarea>
                 <button type="submit" id="send-button">Send</button>
             </form>
         </div>

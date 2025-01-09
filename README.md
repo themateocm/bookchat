@@ -5,16 +5,17 @@ A lightweight, Git-backed web-based messaging application that allows users to c
 ## Features
 
 - Simple and intuitive web interface
-- Message persistence using SQLite database
+- Flexible storage backend (Git or SQLite)
 - Git integration for message history
 - Real-time message updates
 - Basic user authentication
 - Markdown support for messages
+- Serverless-friendly when using Git storage
 
 ## Tech Stack
 
 - Backend: Python (No frameworks)
-- Database: SQLite
+- Storage: Git-based JSON files or SQLite database
 - Frontend: HTML, CSS, JavaScript (Vanilla)
 - Version Control: Git (via GitHub API)
 - Authentication: GitHub OAuth
@@ -33,8 +34,11 @@ bookchat/
 ├── templates/
 │   ├── index.html
 │   └── login.html
-├── database/
-│   └── schema.sql
+├── storage/
+│   ├── __init__.py
+│   ├── factory.py
+│   ├── git_storage.py
+│   └── sqlite_storage.py
 ├── server.py
 └── requirements.txt
 ```
@@ -58,42 +62,43 @@ bookchat/
    pip install -r requirements.txt
    ```
 
-4. Set up your GitHub OAuth application and update the `.env` file with your credentials:
-   ```
-   GITHUB_CLIENT_ID=your_client_id
-   GITHUB_CLIENT_SECRET=your_client_secret
-   SECRET_KEY=your_secret_key
-   ```
-
-5. Initialize the database:
+4. Configure storage backend in `.env`:
    ```bash
-   python server.py init-db
+   # Choose storage backend: 'git' or 'sqlite'
+   BOOKCHAT_STORAGE=git
+   
+   # For Git storage
+   REPO_PATH=/path/to/your/repo
+   
+   # For SQLite storage
+   DB_PATH=/path/to/database.db
    ```
 
-6. Run the application:
-   You can start the server in two ways:
-
-   1. Direct start:
+5. Run the server:
    ```bash
    python server.py
    ```
 
-   2. Using the restart script (recommended):
-   ```bash
-   ./restart_server.sh
-   ```
+## Deployment Options
 
-   The restart script will automatically:
-   - Stop any existing server instances
-   - Wait for the port to be released
-   - Start a new server instance
+BookChat supports multiple deployment options:
 
-7. Open your browser and navigate to `http://localhost:8000`
+### 1. GitHub Pages (Serverless)
+- Use Git storage backend
+- Host static files on GitHub Pages
+- Messages stored directly in the Git repository
+- Perfect for small to medium-sized deployments
 
-## Development
+### 2. Traditional Server
+- Use either Git or SQLite storage
+- Deploy on any Python-compatible hosting platform
+- Suitable for larger deployments with more control
 
-This project is being developed incrementally with a focus on simplicity and maintainability. Each component is built without relying on heavy frameworks to maintain clarity and ease of understanding.
+### 3. Serverless Platforms
+- Use Git storage backend
+- Deploy on platforms like Vercel, Netlify, or Cloudflare Pages
+- Great for scalable, maintenance-free deployments
 
-## License
+## Contributing
 
-MIT License - Feel free to use this project for learning or building your own messaging application.
+Contributions are welcome! Please feel free to submit a Pull Request.
