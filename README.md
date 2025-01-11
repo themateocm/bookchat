@@ -11,6 +11,7 @@ A lightweight, Git-backed web-based messaging application that allows users to c
 - Basic user authentication
 - Markdown support for messages
 - Serverless-friendly when using Git storage
+- Comprehensive logging system with multiple debug levels
 
 ## Tech Stack
 
@@ -98,6 +99,55 @@ BookChat supports multiple deployment options:
 - Use Git storage backend
 - Deploy on platforms like Vercel, Netlify, or Cloudflare Pages
 - Great for scalable, maintenance-free deployments
+
+## Logging and Debugging
+
+BookChat includes a comprehensive logging system with multiple debug levels:
+
+### Log Files
+
+All logs are stored in the `logs` directory:
+- `logs/debug.log`: Contains all log messages (DEBUG and above)
+- `logs/info.log`: Contains INFO level and above messages
+- `logs/error.log`: Contains only ERROR and CRITICAL messages
+
+### Console Output
+
+By default, the console shows only WARNING and above messages to keep the output clean. To enable debug output in the console:
+
+1. Set the environment variable:
+   ```bash
+   export BOOKCHAT_DEBUG=true
+   ```
+
+2. Or add to your `.env` file:
+   ```bash
+   BOOKCHAT_DEBUG=true
+   ```
+
+### Log Levels
+
+The logging system uses standard Python logging levels (from lowest to highest priority):
+- DEBUG: Detailed information for debugging
+- INFO: General operational messages
+- WARNING: Warning messages for potential issues
+- ERROR: Error messages for actual problems
+- CRITICAL: Critical issues that need immediate attention
+
+### Debugging Tips
+
+1. Check the appropriate log file based on the severity of the issue:
+   - For detailed debugging: `logs/debug.log`
+   - For general operation info: `logs/info.log`
+   - For errors and critical issues: `logs/error.log`
+
+2. Enable console debug output temporarily using the `BOOKCHAT_DEBUG` environment variable
+
+3. Log files include detailed information such as:
+   - Timestamp
+   - Log level
+   - Source file and line number
+   - Detailed message
 
 ## Contributing
 

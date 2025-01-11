@@ -14,8 +14,12 @@ from http import HTTPStatus
 from dotenv import load_dotenv
 from storage.factory import create_storage
 
-# Configure logging with a more detailed format
+# Configure logging with a more detailed format and multiple levels
 log_format = '%(asctime)s - %(name)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s'
+console_format = '%(asctime)s - %(levelname)s - %(message)s'  # Simpler format for console
+
+# Create logs directory if it doesn't exist
+os.makedirs('logs', exist_ok=True)
 
 # Remove all existing handlers
 root = logging.getLogger()
@@ -23,20 +27,41 @@ if root.handlers:
     for handler in root.handlers:
         root.removeHandler(handler)
 
-# Configure root logger
-handler = logging.StreamHandler()
-handler.setFormatter(logging.Formatter(log_format))
-root.addHandler(handler)
+# Configure file handlers for different log levels
+debug_handler = logging.FileHandler('logs/debug.log')
+debug_handler.setLevel(logging.DEBUG)
+debug_handler.setFormatter(logging.Formatter(log_format))
+
+info_handler = logging.FileHandler('logs/info.log')
+info_handler.setLevel(logging.INFO)
+info_handler.setFormatter(logging.Formatter(log_format))
+
+error_handler = logging.FileHandler('logs/error.log')
+error_handler.setLevel(logging.ERROR)
+error_handler.setFormatter(logging.Formatter(log_format))
+
+# Configure console handler with simpler format and WARNING level by default
+console_handler = logging.StreamHandler()
+console_level = logging.DEBUG if os.getenv('BOOKCHAT_DEBUG') else logging.WARNING
+console_handler.setLevel(console_level)
+console_handler.setFormatter(logging.Formatter(console_format))
+
+# Add all handlers to root logger
+root.addHandler(debug_handler)
+root.addHandler(info_handler)
+root.addHandler(error_handler)
+root.addHandler(console_handler)
+
+# Set root logger to lowest level (DEBUG) to catch all logs
 root.setLevel(logging.DEBUG)
 
-# Configure module loggers
-for name in ['storage', 'storage.git_storage', 'storage.factory', 'git_manager']:
-    logger = logging.getLogger(name)
-    logger.setLevel(logging.DEBUG)
-    # Don't add handlers to child loggers
-    logger.propagate = True
+# Create a logger specific to this application
+logger = logging.getLogger('bookchat')
 
-logger = logging.getLogger(__name__)
+# Log initial debug state
+logger.info(f"Console logging level: {logging.getLevelName(console_level)}")
+if console_level == logging.DEBUG:
+    logger.info("Debug logging enabled via BOOKCHAT_DEBUG environment variable")
 
 # Load environment variables
 load_dotenv()
@@ -62,12 +87,13 @@ class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
 
     def __init__(self, *args, **kwargs):
         # Set the directory for serving static files
+        logger.debug("Initializing ChatRequestHandler")
         super().__init__(*args, directory="static", **kwargs)
 
     def handle_error(self, error):
         """Handle errors and return appropriate response"""
-        error_msg = f"Error occurred: {error}\n{traceback.format_exc()}"
-        logger.error(error_msg)
+        error_msg = f"Error occurred: {str(error)}"
+        logger.error(error_msg, exc_info=True)  # Include full stack trace
         error_response = {
             'error': str(error),
             'traceback': traceback.format_exc()
@@ -81,16 +107,18 @@ class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
         """Handle GET requests"""
         try:
             parsed_path = urlparse(self.path)
-            logger.debug(f"GET request to {parsed_path.path}")
+            client_address = self.client_address[0]
+            logger.info(f"GET request from {client_address} to {parsed_path.path}")
             
             if parsed_path.path == '/':
-                # Serve the main page
+                logger.debug("Serving main page")
                 self.serve_file('templates/index.html', 'text/html')
             elif parsed_path.path.startswith('/static/'):
                 # Handle static files directly
                 try:
                     # Remove the leading '/static/' to get the relative path
                     file_path = parsed_path.path[8:]  # len('/static/') == 8
+                    logger.debug(f"Serving static file: {file_path}")
                     with open(os.path.join('static', file_path), 'rb') as f:
                         content = f.read()
                         self.send_response(HTTPStatus.OK)
@@ -99,35 +127,39 @@ class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
                         self.send_header('Content-Length', str(len(content)))
                         self.end_headers()
                         self.wfile.write(content)
+                        logger.debug(f"Successfully served static file: {file_path}")
                 except FileNotFoundError:
                     logger.error(f"Static file not found: {file_path}")
                     self.send_error(HTTPStatus.NOT_FOUND)
             elif parsed_path.path == '/messages':
-                # Return all messages as JSON
+                logger.debug("Handling messages request")
                 self.serve_messages()
             elif parsed_path.path == '/verify_username':
-                # Verify and return the current username
+                logger.debug("Handling username verification")
                 self.verify_username()
             else:
-                # Try to serve static files
+                logger.info(f"Attempting to serve unknown path: {parsed_path.path}")
                 super().do_GET()
         except Exception as e:
+            logger.error(f"Error in GET request handler", exc_info=True)
             self.handle_error(e)
 
     def do_POST(self):
         """Handle POST requests"""
         try:
             parsed_path = urlparse(self.path)
-            logger.debug(f"POST request to {parsed_path.path}")
+            client_address = self.client_address[0]
+            logger.info(f"POST request from {client_address} to {parsed_path.path}")
             
             # Handle messages
             if parsed_path.path == '/messages':
                 # Get content length
                 content_length = int(self.headers.get('Content-Length', 0))
+                logger.debug(f"Content length: {content_length}")
                 
                 # Read and parse the body
                 body = self.rfile.read(content_length).decode('utf-8')
-                logger.info(f"Received message body: {body}")
+                logger.debug(f"Received message body: {body[:200]}...")  # Log first 200 chars to avoid huge logs
                 
                 # Handle both JSON and form data
                 if self.headers.get('Content-Type') == 'application/json':
@@ -199,6 +231,7 @@ class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
                 self.send_error(HTTPStatus.NOT_FOUND)
                 
         except Exception as e:
+            logger.error(f"Error in POST request handler", exc_info=True)
             self.handle_error(e)
 
     def serve_file(self, filepath, content_type):
