@@ -12,11 +12,13 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
 class KeyManager:
-    def __init__(self, keys_dir):
-        self.keys_dir = Path(keys_dir)
-        self.keys_dir.mkdir(parents=True, exist_ok=True)
-        self.private_key_path = self.keys_dir / 'local.pem'
-        self.public_key_path = self.keys_dir / 'local.pub'
+    def __init__(self, private_keys_dir, public_keys_dir):
+        self.private_keys_dir = Path(private_keys_dir)
+        self.public_keys_dir = Path(public_keys_dir)
+        self.private_keys_dir.mkdir(parents=True, exist_ok=True)
+        self.public_keys_dir.mkdir(parents=True, exist_ok=True)
+        self.private_key_path = self.private_keys_dir / 'local.pem'
+        self.public_key_path = self.public_keys_dir / 'local.pub'
         
         # Generate key pair if it doesn't exist
         if not self.private_key_path.exists():
@@ -30,14 +32,14 @@ class KeyManager:
     
     def verify_signature(self, message, signature_hex, public_key_pem):
         # Write signature to temp file
-        sig_path = self.keys_dir / 'temp.sig'
+        sig_path = self.private_keys_dir / 'temp.sig'
         try:
             # Convert hex signature back to bytes and write to file
             signature_bytes = bytes.fromhex(signature_hex)
             sig_path.write_bytes(signature_bytes)
             
             # Write public key to temp file
-            pub_path = self.keys_dir / 'temp.pub'
+            pub_path = self.private_keys_dir / 'temp.pub'
             pub_path.write_text(public_key_pem)
             
             # Verify signature
@@ -71,7 +73,7 @@ class KeyManager:
         public_key = private_key.public_key()
 
         # Save private key
-        private_key_path = self.keys_dir / f'{username}.pem'
+        private_key_path = self.private_keys_dir / f'{username}.pem'
         private_pem = private_key.private_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PrivateFormat.PKCS8,
@@ -80,7 +82,7 @@ class KeyManager:
         private_key_path.write_bytes(private_pem)
 
         # Save public key
-        public_key_path = self.keys_dir / f'{username}.pub'
+        public_key_path = self.public_keys_dir / f'{username}.pub'
         public_pem = public_key.public_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PublicFormat.SubjectPublicKeyInfo
@@ -89,26 +91,27 @@ class KeyManager:
 
     def get_private_key_path(self, username):
         # Get private key path for the user
-        return self.keys_dir / f'{username}.pem'
+        return self.private_keys_dir / f'{username}.pem'
 
 class GitManager:
     def __init__(self, repo_path):
         """Initialize GitManager with repository path and GitHub credentials."""
         self.repo_path = Path(repo_path)
-        self.token = os.environ.get('GITHUB_TOKEN')
+        self.github_token = os.environ.get('GITHUB_TOKEN')
         self.repo_name = os.environ.get('GITHUB_REPO')
         self.should_sync_to_github = os.environ.get('SYNC_TO_GITHUB', '').lower() == 'true'
         
-        # Initialize key manager with public_keys directory
-        keys_dir = os.environ.get('KEYS_DIR', str(self.repo_path / 'public_keys'))
-        self.key_manager = KeyManager(keys_dir)
+        # Initialize key manager with both private and public key directories
+        private_keys_dir = os.environ.get('KEYS_DIR', str(self.repo_path / 'keys'))
+        public_keys_dir = os.environ.get('PUBLIC_KEYS_DIR', str(self.repo_path / 'identity/public_keys'))
+        self.key_manager = KeyManager(private_keys_dir, public_keys_dir)
         
         # Make GitHub optional
-        self.use_github = bool(self.token and self.repo_name and self.should_sync_to_github)
+        self.use_github = bool(self.github_token and self.repo_name and self.should_sync_to_github)
         if self.use_github:
             print("GitHub synchronization enabled")
             # Initialize GitHub API client
-            self.g = Github(self.token)
+            self.g = Github(self.github_token)
             self.repo = self.g.get_repo(self.repo_name)
             
             # Initialize git repository if needed
@@ -122,7 +125,7 @@ class GitManager:
         self.messages_dir.mkdir(parents=True, exist_ok=True)
         
         # Export public key for anonymous users
-        public_keys_dir = self.repo_path / 'public_keys'
+        public_keys_dir = self.repo_path / 'identity/public_keys'
         public_keys_dir.mkdir(parents=True, exist_ok=True)
         self.key_manager.export_public_key(public_keys_dir / 'anonymous.pub')
         
@@ -143,7 +146,7 @@ class GitManager:
         subprocess.run(['git', 'config', 'user.email', 'bot@bookchat.local'], cwd=str(self.repo_path), check=True)
         
         # Add GitHub remote
-        remote_url = f'https://{self.token}@github.com/{self.repo_name}.git'
+        remote_url = f'https://{self.github_token}@github.com/{self.repo_name}.git'
         subprocess.run(['git', 'remote', 'add', 'origin', remote_url], cwd=str(self.repo_path), check=True)
         
         # Pull existing content
@@ -254,7 +257,7 @@ class GitManager:
             
         # Try to find author's public key
         author = metadata.get('Author', 'anonymous')
-        public_key_path = self.repo_path / 'public_keys' / f'{author}.pub'
+        public_key_path = self.repo_path / 'identity/public_keys' / f'{author}.pub'
         
         if not public_key_path.exists():
             return False  # Can't verify - no public key
@@ -275,14 +278,14 @@ class GitManager:
             
             try:
                 # Ensure the public_keys directory exists
-                public_keys_dir = self.repo_path / 'public_keys'
+                public_keys_dir = self.repo_path / 'identity/public_keys'
                 public_keys_dir.mkdir(exist_ok=True)
                 
                 # Generate new keypair for the user
                 self.key_manager.generate_keypair(new_username)
                 
                 # If there was an old username, clean up its keys
-                old_key_path = self.repo_path / 'public_keys' / f'{old_username}.pub'
+                old_key_path = self.repo_path / 'identity/public_keys' / f'{old_username}.pub'
                 if old_key_path.exists():
                     old_key_path.unlink()
                     old_private_key = self.key_manager.get_private_key_path(old_username)
@@ -291,7 +294,7 @@ class GitManager:
                 
                 # Sync to GitHub if enabled
                 if self.use_github:
-                    new_key_path = self.repo_path / 'public_keys' / f'{new_username}.pub'
+                    new_key_path = self.repo_path / 'identity/public_keys' / f'{new_username}.pub'
                     self.sync_changes_to_github(new_key_path, new_username)
                 
                 return True, "Username changed successfully"

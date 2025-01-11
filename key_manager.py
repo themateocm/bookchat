@@ -10,33 +10,42 @@ from cryptography.exceptions import InvalidSignature
 from base64 import b64encode, b64decode
 
 class KeyManager:
-    def __init__(self, keys_dir=None):
-        """Initialize KeyManager with directory for key storage."""
-        self.keys_dir = Path(keys_dir) if keys_dir else Path('public_keys')
+    def __init__(self, keys_dir=None, public_keys_dir=None):
+        """Initialize KeyManager with directories for key storage.
+        
+        Args:
+            keys_dir: Directory for private keys (installation-specific)
+            public_keys_dir: Directory for public keys (shared in repo)
+        """
+        self.keys_dir = Path(keys_dir) if keys_dir else Path('keys')
+        self.public_keys_dir = Path(public_keys_dir) if public_keys_dir else Path('identity/public_keys')
+        
+        # Ensure directories exist
         self.keys_dir.mkdir(parents=True, exist_ok=True)
+        self.public_keys_dir.mkdir(parents=True, exist_ok=True)
 
     def has_key_pair(self, username):
         """Check if a user has a key pair."""
-        key_file = self.keys_dir / f"{username}.pub"
+        key_file = self.public_keys_dir / f"{username}.pub"
         return key_file.exists()
 
     def get_public_key(self, username):
         """Get a user's public key."""
-        key_file = self.keys_dir / f"{username}.pub"
+        key_file = self.public_keys_dir / f"{username}.pub"
         if key_file.exists():
             return key_file.read_text().strip()
         return None
 
     def sign_message(self, message_content, username):
         """Sign a message for a user."""
-        key_file = self.keys_dir / f"{username}.pub"
+        key_file = self.keys_dir / f"{username}.priv"
         if not key_file.exists():
             return None
         return "signed"  # Simplified for now, we'll implement real signing later
 
     def verify_signature(self, message_content, signature, username):
         """Verify a message signature."""
-        key_file = self.keys_dir / f"{username}.pub"
+        key_file = self.public_keys_dir / f"{username}.pub"
         if not key_file.exists():
             return False
         return True  # Simplified for now, we'll implement real verification later
