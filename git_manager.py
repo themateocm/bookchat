@@ -8,6 +8,8 @@ from github import Github
 import json
 import re
 import shutil
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 
 class KeyManager:
     def __init__(self, keys_dir):
@@ -59,6 +61,36 @@ class KeyManager:
         # Export public key to file
         subprocess.run(['cp', str(self.public_key_path), str(filepath)], check=True)
 
+    def generate_keypair(self, username):
+        """Generate key pair for the user"""
+        # Generate private key
+        private_key = rsa.generate_private_key(
+            public_exponent=65537,
+            key_size=2048
+        )
+        public_key = private_key.public_key()
+
+        # Save private key
+        private_key_path = self.keys_dir / f'{username}.pem'
+        private_pem = private_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption()
+        )
+        private_key_path.write_bytes(private_pem)
+
+        # Save public key
+        public_key_path = self.keys_dir / f'{username}.pub'
+        public_pem = public_key.public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo
+        )
+        public_key_path.write_bytes(public_pem)
+
+    def get_private_key_path(self, username):
+        # Get private key path for the user
+        return self.keys_dir / f'{username}.pem'
+
 class GitManager:
     def __init__(self, repo_path):
         """Initialize GitManager with repository path and GitHub credentials."""
@@ -67,8 +99,8 @@ class GitManager:
         self.repo_name = os.environ.get('GITHUB_REPO')
         self.should_sync_to_github = os.environ.get('SYNC_TO_GITHUB', '').lower() == 'true'
         
-        # Initialize key manager
-        keys_dir = os.environ.get('KEYS_DIR', str(self.repo_path / 'keys'))
+        # Initialize key manager with public_keys directory
+        keys_dir = os.environ.get('KEYS_DIR', str(self.repo_path / 'public_keys'))
         self.key_manager = KeyManager(keys_dir)
         
         # Make GitHub optional
@@ -127,13 +159,39 @@ class GitManager:
             return
 
         try:
+            # Ensure filepath is a Path object
+            filepath = Path(filepath) if not isinstance(filepath, Path) else filepath
+            
+            # Check if the file exists before trying to sync
+            if not filepath.exists():
+                print(f"Warning: File {filepath} does not exist, skipping GitHub sync")
+                return
+            
             # Stage the file
             relative_path = filepath.relative_to(self.repo_path)
             subprocess.run(['git', 'add', str(relative_path)], cwd=str(self.repo_path), check=True)
             
+            # Check if there are any changes to commit
+            status = subprocess.run(
+                ['git', 'status', '--porcelain', str(relative_path)],
+                cwd=str(self.repo_path),
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            
+            if not status.stdout.strip():
+                print(f"No changes to commit for {relative_path}")
+                return
+            
             # Commit the change
-            commit_message = f'Add message from {author}'
-            subprocess.run(['git', 'commit', '-m', commit_message], cwd=str(self.repo_path), check=True)
+            commit_message = f'Update user key for {author}'
+            subprocess.run(
+                ['git', 'commit', '--no-verify', '-m', commit_message],
+                cwd=str(self.repo_path),
+                check=True,
+                env={**os.environ, 'GIT_AUTHOR_NAME': author, 'GIT_AUTHOR_EMAIL': f'{author}@bookchat.local'}
+            )
             
             # Push to GitHub
             subprocess.run(['git', 'push', 'origin', 'main'], cwd=str(self.repo_path), check=True)
@@ -207,7 +265,7 @@ class GitManager:
         except ValueError:
             return False  # Invalid signature format
 
-    def handle_username_change(self, old_username, new_username, message_id):
+    def handle_username_change(self, old_username, new_username, message_id=None):
         """Handle username change request after verification"""
         try:
             # Validate new username format
@@ -215,27 +273,30 @@ class GitManager:
             if not USERNAME_REGEX.match(new_username):
                 return False, "Username must be 3-20 characters long and contain only letters, numbers, and underscores"
             
-            # Check if new username already exists
-            new_key_path = self.repo_path / 'public_keys' / f'{new_username}.pub'
-            if new_key_path.exists():
-                return False, "New username already exists"
-            
-            # Get old key path
-            old_key_path = self.repo_path / 'public_keys' / f'{old_username}.pub'
-            if not old_key_path.exists():
-                return False, "Old username public key not found"
-            
             try:
-                # Move the public key file
-                shutil.move(str(old_key_path), str(new_key_path))
+                # Ensure the public_keys directory exists
+                public_keys_dir = self.repo_path / 'public_keys'
+                public_keys_dir.mkdir(exist_ok=True)
+                
+                # Generate new keypair for the user
+                self.key_manager.generate_keypair(new_username)
+                
+                # If there was an old username, clean up its keys
+                old_key_path = self.repo_path / 'public_keys' / f'{old_username}.pub'
+                if old_key_path.exists():
+                    old_key_path.unlink()
+                    old_private_key = self.key_manager.get_private_key_path(old_username)
+                    if old_private_key.exists():
+                        old_private_key.unlink()
                 
                 # Sync to GitHub if enabled
                 if self.use_github:
+                    new_key_path = self.repo_path / 'public_keys' / f'{new_username}.pub'
                     self.sync_changes_to_github(new_key_path, new_username)
                 
                 return True, "Username changed successfully"
             except OSError as e:
-                # If move fails, return error
+                # If operation fails, return error
                 return False, f"Failed to update username: {str(e)}"
                 
         except Exception as e:
