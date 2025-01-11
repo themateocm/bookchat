@@ -125,14 +125,9 @@ class GitStorage(StorageBackend):
             # Stage and commit the file
             logger.info("Committing message to Git repository")
             try:
-                # Get relative path from repo root
-                relative_path = message_path.relative_to(self.repo_path)
-                logger.debug(f"Relative path for Git: {relative_path}")
-                
-                # Stage the file
-                logger.debug("Running git add...")
+                # Add only the specific message file
                 result = subprocess.run(
-                    ['git', 'add', str(relative_path)],
+                    ['git', 'add', str(message_path)],
                     cwd=str(self.repo_path),
                     check=True,
                     capture_output=True,
@@ -142,11 +137,11 @@ class GitStorage(StorageBackend):
                 if result.stderr:
                     logger.warning(f"Git add stderr: {result.stderr}")
                 
-                # Commit the file
+                # Commit the specific file
                 commit_msg = f'Add message from {user}'
                 logger.debug(f"Running git commit with message: {commit_msg}")
                 result = subprocess.run(
-                    ['git', 'commit', '-m', commit_msg],
+                    ['git', 'commit', '--no-verify', str(message_path), '-m', commit_msg],
                     cwd=str(self.repo_path),
                     check=True,
                     capture_output=True,
@@ -202,10 +197,52 @@ class GitStorage(StorageBackend):
             for file_path in message_files:
                 try:
                     with open(file_path) as f:
-                        message = json.load(f)
-                        messages.append(message)
+                        content = f.read()
+                    
+                    message_dict = {'file': str(file_path)}
+                    
+                    # First try to parse as JSON
+                    try:
+                        json_content = json.loads(content)
+                        if isinstance(json_content, dict):
+                            message_dict.update(json_content)
+                            messages.append(message_dict)
+                            continue
+                    except json.JSONDecodeError:
+                        # If JSON parsing fails, treat as plaintext
+                        pass
+                    
+                    # Handle as plaintext
+                    message_dict['content'] = content
+                    
+                    # Try to extract date and author if present
+                    for line in content.split('\n'):
+                        if line.startswith('Date:'):
+                            try:
+                                message_dict['timestamp'] = line.replace('Date:', '').strip()
+                            except:
+                                pass
+                        elif line.startswith('Author:'):
+                            try:
+                                message_dict['user'] = line.replace('Author:', '').strip()
+                            except:
+                                pass
+                    
+                    # Extract actual message content (everything after metadata)
+                    message_lines = content.split('\n')
+                    message_start = 0
+                    for i, line in enumerate(message_lines):
+                        if not line.strip():  # First empty line marks end of metadata
+                            message_start = i + 1
+                            break
+                    
+                    message_dict['content'] = '\n'.join(message_lines[message_start:]).strip()
+                    messages.append(message_dict)
+                    
                 except Exception as e:
                     logger.error(f"Failed to read message file {file_path}: {e}")
+                    # Continue processing other files even if one fails
+                    continue
             
             logger.debug(f"Returning {len(messages)} messages")
             return messages
