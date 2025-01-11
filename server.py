@@ -317,7 +317,22 @@ def find_available_port(start_port=8000, max_attempts=100):
 def open_browser(port):
     """Open the browser to the application URL"""
     try:
-        os.system(f'cmd.exe /C start chrome --new-window http://localhost:{port}')
+        import platform
+        url = f'http://localhost:{port}'
+        
+        if platform.system() == 'Linux':
+            # Check if running in WSL
+            with open('/proc/version', 'r') as f:
+                if 'microsoft' in f.read().lower():
+                    # In WSL, use powershell.exe to start browser
+                    os.system(f'powershell.exe -c "Start-Process \'{url}\'"')
+                else:
+                    # Pure Linux
+                    os.system(f'xdg-open {url}')
+        elif platform.system() == 'Windows':
+            os.system(f'start {url}')
+        elif platform.system() == 'Darwin':
+            os.system(f'open {url}')
     except Exception as e:
         logger.error(f"Failed to open browser: {e}")
 
