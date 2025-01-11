@@ -13,6 +13,7 @@ from urllib.parse import parse_qs, urlparse
 from http import HTTPStatus
 from dotenv import load_dotenv
 from storage.factory import create_storage
+from pathlib import Path
 
 # Configure logging with a more detailed format and multiple levels
 log_format = '%(asctime)s - %(name)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s'
@@ -86,6 +87,11 @@ class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
     """Custom request handler for the chat application"""
 
     def __init__(self, *args, **kwargs):
+        # Initialize storage
+        global storage
+        if storage is None:
+            storage = GitStorage('.')
+            storage.key_manager = KeyManager('public_keys')  # Use the public_keys directory
         # Set the directory for serving static files
         logger.debug("Initializing ChatRequestHandler")
         super().__init__(*args, directory="static", **kwargs)
@@ -106,18 +112,37 @@ class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
         """Handle GET requests"""
         try:
-            parsed_path = urlparse(self.path)
-            client_address = self.client_address[0]
-            logger.info(f"GET request from {client_address} to {parsed_path.path}")
+            parsed_url = urlparse(self.path)
+            path = parsed_url.path
             
-            if parsed_path.path == '/':
+            client_address = self.client_address[0]
+            logger.info(f"GET request from {client_address} to {path}")
+            
+            if path == '/':
                 logger.debug("Serving main page")
                 self.serve_file('templates/index.html', 'text/html')
-            elif parsed_path.path.startswith('/static/'):
+            elif path == '/messages':
+                logger.debug("Handling messages request")
+                self.serve_messages()
+            elif path == '/verify_username':
+                logger.debug("Handling username verification")
+                self.verify_username()
+            elif path.startswith('/messages/'):
+                # Serve individual message files
+                filename = path.split('/')[-1]
+                message_path = Path('messages') / filename
+                if message_path.exists() and message_path.is_file():
+                    self.send_response(HTTPStatus.OK)
+                    self.send_header('Content-Type', 'text/plain')
+                    self.end_headers()
+                    self.wfile.write(message_path.read_bytes())
+                else:
+                    self.send_error(HTTPStatus.NOT_FOUND, "Message file not found")
+            elif path.startswith('/static/'):
                 # Handle static files directly
                 try:
                     # Remove the leading '/static/' to get the relative path
-                    file_path = parsed_path.path[8:]  # len('/static/') == 8
+                    file_path = path[8:]  # len('/static/') == 8
                     logger.debug(f"Serving static file: {file_path}")
                     with open(os.path.join('static', file_path), 'rb') as f:
                         content = f.read()
@@ -131,14 +156,8 @@ class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
                 except FileNotFoundError:
                     logger.error(f"Static file not found: {file_path}")
                     self.send_error(HTTPStatus.NOT_FOUND)
-            elif parsed_path.path == '/messages':
-                logger.debug("Handling messages request")
-                self.serve_messages()
-            elif parsed_path.path == '/verify_username':
-                logger.debug("Handling username verification")
-                self.verify_username()
             else:
-                logger.info(f"Attempting to serve unknown path: {parsed_path.path}")
+                logger.info(f"Attempting to serve unknown path: {path}")
                 super().do_GET()
         except Exception as e:
             logger.error(f"Error in GET request handler", exc_info=True)
@@ -151,88 +170,149 @@ class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
             client_address = self.client_address[0]
             logger.info(f"POST request from {client_address} to {parsed_path.path}")
             
-            # Handle messages
             if parsed_path.path == '/messages':
-                # Get content length
-                content_length = int(self.headers.get('Content-Length', 0))
-                logger.debug(f"Content length: {content_length}")
-                
-                # Read and parse the body
-                body = self.rfile.read(content_length).decode('utf-8')
-                logger.debug(f"Received message body: {body[:200]}...")  # Log first 200 chars to avoid huge logs
-                
-                # Handle both JSON and form data
-                if self.headers.get('Content-Type') == 'application/json':
-                    data = json.loads(body)
-                    content = data.get('content')
-                    author = data.get('author', 'anonymous')
-                    logger.info(f"Processing JSON message from {author}: {content}")
-                else:
-                    # Parse form data
-                    form_data = parse_qs(body)
-                    content = form_data.get('content', [''])[0]
-                    author = 'anonymous'  # No-JS always uses anonymous
-                    logger.info(f"Processing form message from {author}: {content}")
-                
-                # Save the message
-                logger.debug("Attempting to save message...")
-                try:
-                    success = storage.save_message(author, content, datetime.now())
-                    logger.info(f"Message save {'successful' if success else 'failed'}")
-                except Exception as e:
-                    logger.error(f"Exception while saving message: {e}\n{traceback.format_exc()}")
-                    success = False
-                
-                if success:
-                    # Get the latest messages to return the new message
-                    messages = storage.get_messages(limit=1)
-                    new_message = messages[0] if messages else None
-                    logger.info(f"Retrieved new message: {new_message}")
-                    
-                    # Return response based on content type
-                    if self.headers.get('Content-Type') == 'application/json':
-                        self.send_response(HTTPStatus.OK)
-                        self.send_header('Content-Type', 'application/json')
-                        self.end_headers()
-                        self.wfile.write(json.dumps(new_message).encode('utf-8'))
-                    else:
-                        # Redirect back to home page for form submission
-                        self.send_response(HTTPStatus.FOUND)
-                        self.send_header('Location', '/')
-                        self.end_headers()
-                else:
-                    raise Exception("Failed to save message")
-            
-            # Handle username changes
+                self.handle_message_post()
             elif parsed_path.path == '/username':
-                content_length = int(self.headers.get('Content-Length', 0))
-                body = self.rfile.read(content_length).decode('utf-8')
-                logger.debug(f"Username change request: {body}")
-                
-                # Parse form data
-                form_data = parse_qs(body)
-                new_username = form_data.get('new_username', [''])[0]
-                
-                if new_username:
-                    # Create username change message
-                    content = json.dumps({
-                        'old_username': 'anonymous',
-                        'new_username': new_username,
-                        'type': 'username_change'
-                    })
-                    storage.save_message('system', content, datetime.now())
-                
-                # Redirect back to home page
-                self.send_response(HTTPStatus.FOUND)
-                self.send_header('Location', '/')
-                self.end_headers()
-            
+                self.handle_username_post()
+            elif parsed_path.path == '/change_username':
+                self.handle_username_change()
             else:
                 self.send_error(HTTPStatus.NOT_FOUND)
-                
         except Exception as e:
             logger.error(f"Error in POST request handler", exc_info=True)
             self.handle_error(e)
+
+    def handle_message_post(self):
+        """Handle message posting"""
+        try:
+            # Get content length
+            content_length = int(self.headers.get('Content-Length', 0))
+            logger.debug(f"Content length: {content_length}")
+            
+            # Read and parse the body
+            body = self.rfile.read(content_length).decode('utf-8')
+            logger.debug(f"Received message body: {body[:200]}...")  # Log first 200 chars to avoid huge logs
+            
+            # Get username from cookie if available
+            cookies = {}
+            if 'Cookie' in self.headers:
+                for cookie in self.headers['Cookie'].split(';'):
+                    name, value = cookie.strip().split('=', 1)
+                    cookies[name] = value
+            
+            # Handle both JSON and form data
+            if self.headers.get('Content-Type') == 'application/json':
+                data = json.loads(body)
+                content = data.get('content')
+                # Use cookie username if available, otherwise use from request
+                author = cookies.get('username') or data.get('author', 'anonymous')
+                logger.info(f"Processing JSON message from {author}: {content}")
+            else:
+                # Parse form data
+                form_data = parse_qs(body)
+                content = form_data.get('content', [''])[0]
+                author = cookies.get('username', 'anonymous')  # Use cookie username if available
+                logger.info(f"Processing form message from {author}: {content}")
+            
+            # Check if user has a key pair
+            has_key = storage.key_manager.has_key_pair(author)
+            
+            # Save the message
+            logger.debug("Attempting to save message...")
+            try:
+                success = storage.save_message(
+                    author, 
+                    content, 
+                    datetime.now(),
+                    sign=has_key  # Only sign if user has a key pair
+                )
+                logger.info(f"Message save {'successful' if success else 'failed'}")
+            except Exception as e:
+                logger.error(f"Exception while saving message: {e}\n{traceback.format_exc()}")
+                success = False
+            
+            if success:
+                # Get the latest messages to return the new message
+                messages = storage.get_messages(limit=1)
+                new_message = messages[0] if messages else None
+                logger.info(f"Retrieved new message: {new_message}")
+                
+                # Return response based on content type
+                if self.headers.get('Content-Type') == 'application/json':
+                    self.send_response(HTTPStatus.OK)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(json.dumps(new_message).encode('utf-8'))
+                else:
+                    # Redirect back to home page for form submission
+                    self.send_response(HTTPStatus.FOUND)
+                    self.send_header('Location', '/')
+                    self.end_headers()
+            else:
+                raise Exception("Failed to save message")
+        except Exception as e:
+            logger.error(f"Error in message posting", exc_info=True)
+            self.handle_error(e)
+
+    def handle_username_post(self):
+        """Handle username change request"""
+        try:
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(content_length).decode('utf-8')
+            logger.debug(f"Username change request: {body}")
+            
+            # Parse form data
+            form_data = parse_qs(body)
+            new_username = form_data.get('new_username', [''])[0]
+            
+            if new_username:
+                # Create username change message
+                content = json.dumps({
+                    'old_username': 'anonymous',
+                    'new_username': new_username,
+                    'type': 'username_change'
+                })
+                storage.save_message('system', content, datetime.now())
+            
+            # Redirect back to home page
+            self.send_response(HTTPStatus.FOUND)
+            self.send_header('Location', '/')
+            self.end_headers()
+        except Exception as e:
+            logger.error(f"Error in username change request", exc_info=True)
+            self.handle_error(e)
+
+    def handle_username_change(self):
+        """Handle username change request"""
+        try:
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(content_length).decode('utf-8')
+            data = json.loads(body)
+            
+            old_username = data.get('old_username')
+            new_username = data.get('new_username')
+            
+            if not old_username or not new_username:
+                self.send_error(HTTPStatus.BAD_REQUEST, "Missing username data")
+                return
+            
+            # Generate new keypair and handle username change
+            success, message = storage.git_manager.handle_username_change(old_username, new_username)
+            
+            if success:
+                # Set username cookie
+                cookie = f'username={new_username}; Path=/; HttpOnly; SameSite=Strict'
+                
+                self.send_response(HTTPStatus.OK)
+                self.send_header('Content-Type', 'text/plain')
+                self.send_header('Set-Cookie', cookie)
+                self.end_headers()
+                self.wfile.write(message.encode('utf-8'))
+            else:
+                self.send_error(HTTPStatus.BAD_REQUEST, message)
+        except Exception as e:
+            logger.error(f"Error in username change request", exc_info=True)
+            self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR, str(e))
 
     def serve_file(self, filepath, content_type):
         """Helper method to serve a file with specified content type"""
@@ -255,10 +335,24 @@ class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
         """Helper method to serve messages as JSON"""
         try:
             messages = storage.get_messages()
+            
+            # Get current username from cookie or public key
+            cookies = {}
+            if 'Cookie' in self.headers:
+                for cookie in self.headers['Cookie'].split(';'):
+                    name, value = cookie.strip().split('=', 1)
+                    cookies[name] = value
+            
+            # Include current username in response
+            response = {
+                'messages': messages,
+                'currentUsername': cookies.get('username', 'anonymous')
+            }
+            
             self.send_response(HTTPStatus.OK)
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
-            self.wfile.write(json.dumps(messages).encode('utf-8'))
+            self.wfile.write(json.dumps(response).encode('utf-8'))
         except Exception as e:
             logger.error(f"Error serving messages: {e}")
             self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR, str(e))
@@ -266,18 +360,38 @@ class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
     def verify_username(self):
         """Helper method to verify username"""
         try:
-            # For GET requests, just return anonymous
+            # For GET requests, check cookie first, then fall back to keys
             if self.command == 'GET':
+                # Check for username cookie
+                cookies = {}
+                if 'Cookie' in self.headers:
+                    for cookie in self.headers['Cookie'].split(';'):
+                        name, value = cookie.strip().split('=', 1)
+                        cookies[name] = value
+                
+                username = cookies.get('username', None)
+                if not username:
+                    # Fall back to checking public keys
+                    public_keys_dir = Path(storage.git_manager.repo_path) / 'public_keys'
+                    if public_keys_dir.exists():
+                        key_files = list(public_keys_dir.glob('*.pub'))
+                        if key_files:
+                            latest_key = max(key_files, key=lambda x: x.stat().st_mtime)
+                            username = latest_key.stem
+                        else:
+                            username = 'anonymous'
+                    else:
+                        username = 'anonymous'
+
                 self.send_response(HTTPStatus.OK)
                 self.send_header('Content-Type', 'application/json')
                 self.end_headers()
                 self.wfile.write(json.dumps({
-                    'username': 'anonymous',
+                    'username': username,
                     'valid': True,
                     'status': 'verified'
                 }).encode('utf-8'))
                 return
-            
             # For POST requests, validate the username
             content_length = int(self.headers.get('Content-Length', 0))
             body = self.rfile.read(content_length).decode('utf-8')

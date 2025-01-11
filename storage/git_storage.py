@@ -12,6 +12,7 @@ import traceback
 
 from storage import StorageBackend
 from git_manager import GitManager
+from key_manager import KeyManager  # Import KeyManager
 
 # Get logger for this module
 logger = logging.getLogger(__name__)
@@ -29,6 +30,7 @@ class GitStorage(StorageBackend):
         self.repo_path = Path(repo_path)
         self.messages_dir = self.repo_path / 'messages'
         self.git_manager = GitManager(str(repo_path))
+        self.key_manager = KeyManager()  # Initialize KeyManager
         logger.debug(f"Messages directory: {self.messages_dir}")
         
         # Check if messages directory exists
@@ -75,13 +77,14 @@ class GitStorage(StorageBackend):
             logger.error(f"Failed to initialize storage: {e}\n{traceback.format_exc()}")
             return False
     
-    def save_message(self, user: str, content: str, timestamp: datetime) -> bool:
+    def save_message(self, user: str, content: str, timestamp: datetime, sign: bool = True) -> bool:
         """Save a new message to the Git repository.
         
         Args:
             user: Username of the message sender
             content: Message content
             timestamp: Message timestamp
+            sign: Whether to sign the message
         
         Returns:
             bool: True if successful, False otherwise
@@ -104,10 +107,23 @@ class GitStorage(StorageBackend):
             
             # Format message content
             message_data = {
-                'user': user,
+                'author': user,
                 'content': content,
                 'timestamp': timestamp.isoformat()
             }
+            
+            # Sign message if requested and user has a key pair
+            if sign and self.key_manager.has_key_pair(user):
+                try:
+                    signature = self.key_manager.sign_message(content, user)
+                    if signature:
+                        message_data['signature'] = signature
+                        message_data['public_key'] = self.key_manager.get_public_key(user)
+                        message_data['verified'] = True
+                except Exception as e:
+                    logger.error(f"Failed to sign message: {e}")
+                    # Continue without signature
+            
             logger.debug(f"Message data: {message_data}")
             
             # Write message to file
@@ -205,6 +221,9 @@ class GitStorage(StorageBackend):
                     try:
                         json_content = json.loads(content)
                         if isinstance(json_content, dict):
+                            # Convert 'user' to 'author' for consistency
+                            if 'user' in json_content and 'author' not in json_content:
+                                json_content['author'] = json_content.pop('user')
                             message_dict.update(json_content)
                             messages.append(message_dict)
                             continue
@@ -224,7 +243,7 @@ class GitStorage(StorageBackend):
                                 pass
                         elif line.startswith('Author:'):
                             try:
-                                message_dict['user'] = line.replace('Author:', '').strip()
+                                message_dict['author'] = line.replace('Author:', '').strip()
                             except:
                                 pass
                     
