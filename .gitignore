@@ -38,3 +38,7 @@ wheels/
 *.swp
 *.swo
 .aider*
+
+# Logs
+logs/
+*.log
