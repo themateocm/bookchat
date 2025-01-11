@@ -87,15 +87,29 @@ function createMessageElement(message) {
     messageDiv.className = 'message';
     messageDiv.dataset.messageId = message.id;
     
+    // Create message header for author and timestamp
+    const messageHeader = document.createElement('div');
+    messageHeader.className = 'message-header';
+    
     // Add author info
     const authorSpan = document.createElement('span');
     authorSpan.className = 'author';
-    authorSpan.textContent = message.author;
+    authorSpan.textContent = message.author || 'anonymous';
     if (message.verified === 'true') {
         authorSpan.classList.add('verified');
         authorSpan.title = 'Verified message';
     }
-    messageDiv.appendChild(authorSpan);
+    messageHeader.appendChild(authorSpan);
+    
+    // Add timestamp
+    const timestamp = document.createElement('span');
+    timestamp.className = 'timestamp';
+    const messageDate = new Date(message.timestamp);
+    timestamp.textContent = messageDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    timestamp.title = messageDate.toLocaleString();
+    messageHeader.appendChild(timestamp);
+    
+    messageDiv.appendChild(messageHeader);
     
     // Add message content
     const contentDiv = document.createElement('div');

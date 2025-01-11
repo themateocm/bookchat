@@ -50,20 +50,25 @@ body {
 /* Message bubbles */
 .message {
     max-width: 85%;
-    padding: 10px 15px;
+    padding: 12px 15px;
     background: white;
     border-radius: 8px;
     box-shadow: 0 1px 2px rgba(0,0,0,0.1);
 }
 
+.message .message-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid #e0e0e0;
+}
+
 .message .author {
     font-weight: 600;
-    color: #2196F3;
-    font-size: 0.9em;
-    display: block;
-    margin-bottom: 4px;
-    padding-bottom: 2px;
-    border-bottom: 1px solid #e0e0e0;
+    color: #1976d2;
+    font-size: 0.95em;
 }
 
 .message .author.verified::after {
@@ -73,9 +78,15 @@ body {
     font-size: 0.9em;
 }
 
+.message .timestamp {
+    color: #757575;
+    font-size: 0.85em;
+}
+
 .message .content {
     margin-top: 5px;
     white-space: pre-wrap;
+    line-height: 1.4;
 }
 
 /* Special message types */
