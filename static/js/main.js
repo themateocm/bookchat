@@ -240,6 +240,7 @@ function setupMessageInput() {
     const messageInput = document.getElementById('message-input');
     
     if (messageForm && messageInput) {
+        // Handle form submit (for button click)
         messageForm.addEventListener('submit', async (e) => {
             e.preventDefault();
             const content = messageInput.value.trim();
@@ -250,6 +251,23 @@ function setupMessageInput() {
                 } catch (error) {
                     console.error('Failed to send message:', error);
                     alert('Failed to send message. Please try again.');
+                }
+            }
+        });
+
+        // Handle Enter key press
+        messageInput.addEventListener('keydown', async (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                const content = messageInput.value.trim();
+                if (content) {
+                    try {
+                        await sendMessage(content);
+                        messageInput.value = '';
+                    } catch (error) {
+                        console.error('Failed to send message:', error);
+                        alert('Failed to send message. Please try again.');
+                    }
                 }
             }
         });
