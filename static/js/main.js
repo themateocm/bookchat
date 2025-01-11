@@ -44,7 +44,8 @@ async function loadMessages() {
             throw new Error(`HTTP error! status: ${response.status}`);
         }
         
-        const messages = await response.json();
+        const data = await response.json();
+        const messages = data.messages;
         const messagesDiv = document.getElementById('messages');
         const messagesContainer = document.getElementById('messages-container');
         messagesContainer.innerHTML = '';
@@ -53,30 +54,23 @@ async function loadMessages() {
         messages.sort((a, b) => new Date(b.date) - new Date(a.date));
         messages.reverse();
         
-        // Track username changes and errors
-        let currentUsername = 'anonymous';
+        // Add messages to container
         for (const message of messages) {
-            if (message.type === 'username_change' && message.verified === 'true') {
-                try {
-                    const content = JSON.parse(message.content);
-                    if (content.old_username === currentUsername) {
-                        currentUsername = content.new_username;
-                    }
-                } catch (e) {
-                    console.error('Failed to parse username change:', e);
-                }
-            }
             messagesContainer.appendChild(createMessageElement(message));
-        }
-        
-        // Update current username display
-        const usernameDisplay = document.getElementById('current-username');
-        if (usernameDisplay) {
-            usernameDisplay.textContent = `Current username: ${currentUsername}`;
         }
         
         // Scroll to bottom
         messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        
+        // Update current username
+        if (data.currentUsername) {
+            currentUsername = data.currentUsername;
+            localStorage.setItem('username', currentUsername);
+            const usernameDisplay = document.getElementById('current-username');
+            if (usernameDisplay) {
+                usernameDisplay.textContent = `Current username: ${currentUsername}`;
+            }
+        }
     } catch (error) {
         console.error('Error loading messages:', error);
     }
@@ -99,6 +93,9 @@ function createMessageElement(message) {
         authorSpan.classList.add('verified');
         authorSpan.title = 'Verified message';
     }
+    if (message.signature) {
+        authorSpan.classList.add('signed');
+    }
     messageHeader.appendChild(authorSpan);
     
     // Add timestamp
@@ -108,6 +105,17 @@ function createMessageElement(message) {
     timestamp.textContent = messageDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     timestamp.title = messageDate.toLocaleString();
     messageHeader.appendChild(timestamp);
+    
+    // Add source file link if available
+    if (message.file) {
+        const sourceLink = document.createElement('a');
+        sourceLink.className = 'source-link';
+        sourceLink.href = `/messages/${message.file.split('/').pop()}`; // Get just the filename
+        sourceLink.textContent = '📄';
+        sourceLink.title = 'View source file';
+        sourceLink.target = '_blank'; // Open in new tab
+        messageHeader.appendChild(sourceLink);
+    }
     
     messageDiv.appendChild(messageHeader);
     
@@ -141,6 +149,32 @@ function createMessageElement(message) {
     }
     
     messageDiv.appendChild(contentDiv);
+    
+    // Add signature if present
+    if (message.signature) {
+        const signatureDiv = document.createElement('div');
+        signatureDiv.className = 'signature';
+        
+        const signatureIcon = document.createElement('span');
+        signatureIcon.className = 'signature-icon';
+        signatureIcon.textContent = '🔒';
+        signatureDiv.appendChild(signatureIcon);
+        
+        const signatureText = document.createElement('div');
+        signatureText.className = 'signature-text';
+        
+        const signedText = document.createElement('span');
+        signedText.className = message.verified ? 'signature-verified' : 'signature-unverified';
+        signedText.textContent = message.verified ? 'Verified' : 'Unverified';
+        signatureText.appendChild(signedText);
+        
+        const signedMessage = document.createElement('span');
+        signedMessage.textContent = 'Signed Message';
+        signatureText.appendChild(signedMessage);
+        
+        signatureDiv.appendChild(signatureText);
+        messageDiv.appendChild(signatureDiv);
+    }
     
     return messageDiv;
 }
@@ -185,41 +219,39 @@ async function changeUsername(newUsername) {
             alert('Username must be 3-20 characters long and contain only letters, numbers, and underscores.');
             return false;
         }
-        
-        // First verify if username exists
-        const messages = await fetch('/messages').then(r => r.json());
-        const existingChange = messages.find(m => 
-            m.type === 'username_change' && 
-            JSON.parse(m.content).new_username === newUsername
-        );
-        
-        if (existingChange) {
-            alert('This username is already taken. Please choose another one.');
+
+        // Call the username change endpoint
+        const response = await fetch('/change_username', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                old_username: currentUsername,
+                new_username: newUsername
+            })
+        });
+
+        if (!response.ok) {
+            const error = await response.text();
+            alert(error);
             return false;
         }
+
+        // Update local state
+        currentUsername = newUsername;
+        localStorage.setItem('username', newUsername);
         
-        // Proceed with username change
-        const content = JSON.stringify({
-            old_username: currentUsername,
-            new_username: newUsername
-        });
-        
-        const success = await sendMessage(content, 'username_change');
-        if (success) {
-            currentUsername = newUsername;
-            localStorage.setItem('username', newUsername);
-            
-            // Update display
-            const usernameDisplay = document.getElementById('current-username');
-            if (usernameDisplay) {
-                usernameDisplay.textContent = `Current username: ${newUsername}`;
-            }
-            
-            return true;
+        // Update display
+        const usernameDisplay = document.getElementById('current-username');
+        if (usernameDisplay) {
+            usernameDisplay.textContent = `Current username: ${newUsername}`;
         }
-        return false;
+        
+        return true;
     } catch (error) {
         console.error('Error changing username:', error);
+        alert('Failed to change username. Please try again.');
         return false;
     }
 }

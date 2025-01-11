@@ -109,6 +109,75 @@ body {
     color: #1976d2;
 }
 
+/* Message signature */
+.message .signature {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid #e0e0e0;
+    font-size: 0.85em;
+}
+
+.message .signature-icon {
+    font-size: 1.1em;
+    color: #4CAF50;
+}
+
+.message .signature-text {
+    color: #666;
+    cursor: help;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.message .signature-key {
+    font-family: monospace;
+    background: #f5f5f5;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 0.9em;
+    color: #444;
+}
+
+.message .signature-verified {
+    color: #4CAF50;
+    font-weight: 500;
+}
+
+.message .signature-unverified {
+    color: #f44336;
+    font-weight: 500;
+}
+
+.message .author.signed {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.message .author.signed::after {
+    content: "🔒";
+    font-size: 0.9em;
+    color: #4CAF50;
+}
+
+/* Message source link */
+.message .source-link {
+    margin-left: 8px;
+    color: #666;
+    text-decoration: none;
+    font-size: 1.1em;
+    opacity: 0.7;
+    transition: opacity 0.2s;
+}
+
+.message .source-link:hover {
+    opacity: 1;
+}
+
 /* Input area */
 .message-form {
     padding: 15px;
