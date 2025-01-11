@@ -49,8 +49,9 @@ async function loadMessages() {
         const messagesContainer = document.getElementById('messages-container');
         messagesContainer.innerHTML = '';
         
-        // Sort messages by date
-        messages.sort((a, b) => new Date(a.date) - new Date(b.date));
+        // Sort messages by date (newest at bottom)
+        messages.sort((a, b) => new Date(b.date) - new Date(a.date));
+        messages.reverse();
         
         // Track username changes and errors
         let currentUsername = 'anonymous';
