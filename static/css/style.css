@@ -57,14 +57,20 @@ body {
 }
 
 .message .author {
-    font-weight: bold;
-    color: #333;
+    font-weight: 600;
+    color: #2196F3;
+    font-size: 0.9em;
+    display: block;
+    margin-bottom: 4px;
+    padding-bottom: 2px;
+    border-bottom: 1px solid #e0e0e0;
 }
 
 .message .author.verified::after {
     content: "✓";
     color: #4CAF50;
     margin-left: 4px;
+    font-size: 0.9em;
 }
 
 .message .content {
