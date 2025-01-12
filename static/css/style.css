@@ -82,6 +82,35 @@ body {
     gap: 0.5rem;
 }
 
+#change-username-btn {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.95em;
+    padding: 8px 16px;
+    background: var(--button-bg);
+    color: var(--button-text);
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+}
+
+#change-username-btn:hover {
+    background: var(--button-hover);
+}
+
+.username-icon {
+    font-size: 0.9em;
+    opacity: 0.8;
+}
+
+#username-display::before {
+    content: '@';
+    opacity: 0.8;
+    margin-right: 2px;
+}
+
 .current-username {
     color: #666;
     font-size: 0.9em;
