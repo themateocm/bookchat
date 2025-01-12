@@ -93,6 +93,14 @@ class KeyManager:
         # Get private key path for the user
         return self.private_keys_dir / f'{username}.pem'
 
+    def get_public_key(self, username):
+        # Get public key for the user
+        public_key_path = self.public_keys_dir / f'{username}.pub'
+        if public_key_path.exists():
+            return public_key_path.read_text()
+        else:
+            return None
+
 class GitManager:
     def __init__(self, repo_path):
         """Initialize GitManager with repository path and GitHub credentials."""
@@ -215,39 +223,38 @@ class GitManager:
             gitkeep_path.touch()
 
     def format_message(self, message_content, author, date_str, parent_id=None, signature=None, message_type=None):
-        """Format a message with metadata headers."""
-        header = []
-        header.append(f"Date: {date_str}")
-        header.append(f"Author: {author}")
-        if parent_id:
-            header.append(f"Parent-Message: {parent_id}")
-        if signature:
-            header.append(f"Signature: {signature}")
-        if message_type:
-            header.append(f"Type: {message_type}")
+        """Format a message with metadata footers."""
+        footers = []
+        footers.append(f"Author: {author}")
+        footers.append(f"Date: {date_str}")
         
-        # Join headers and add blank line before content
-        return "\n".join(header) + "\n\n" + message_content
+        if parent_id:
+            footers.append(f"Parent-Message: {parent_id}")
+        if signature:
+            footers.append(f"Signature: {signature}")
+        if message_type:
+            footers.append(f"Type: {message_type}")
+            
+        # Put message first, then metadata after the standard email signature separator
+        return message_content + "\n\n-- \n" + "\n".join(footers)
 
     def parse_message(self, content):
-        """Parse a message file content into metadata and message."""
-        lines = content.split("\n")
+        """Parse a message into metadata and content."""
+        # Split content and footers using standard email signature separator
+        parts = content.split("\n-- \n", 1)
+        if len(parts) != 2:
+            return {}, content.strip()  # No footers found
+            
+        message, footers_text = parts
+        
+        # Parse footers
         metadata = {}
-        message_start = 0
-        
-        # Parse headers
-        for i, line in enumerate(lines):
-            if not line.strip():  # Empty line marks end of headers
-                message_start = i + 1
-                break
-            if ":" in line:
-                key, value = line.split(":", 1)
-                metadata[key.strip()] = value.strip()
-        
-        # Get message content
-        message = "\n".join(lines[message_start:]).strip()
-        
-        return metadata, message
+        for line in footers_text.split("\n"):
+            if ": " in line:
+                key, value = line.split(": ", 1)
+                metadata[key] = value
+                
+        return metadata, message.strip()
 
     def verify_message(self, content, metadata):
         """Verify message signature if present."""
@@ -257,14 +264,13 @@ class GitManager:
             
         # Try to find author's public key
         author = metadata.get('Author', 'anonymous')
-        public_key_path = self.repo_path / 'identity/public_keys' / f'{author}.pub'
         
-        if not public_key_path.exists():
-            return False  # Can't verify - no public key
-            
         try:
-            public_key_pem = public_key_path.read_text()
-            return self.key_manager.verify_signature(content, signature, public_key_pem)
+            public_key = self.key_manager.get_public_key(author)
+            if not public_key:
+                return False  # Can't verify - no public key
+                
+            return self.key_manager.verify_signature(content, signature, public_key)
         except ValueError:
             return False  # Invalid signature format
 
