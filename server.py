@@ -67,6 +67,9 @@ if console_level == logging.DEBUG:
 # Load environment variables
 load_dotenv()
 
+# Feature flags
+MESSAGE_VERIFICATION_ENABLED = os.getenv('MESSAGE_VERIFICATION', 'false').lower() == 'true'
+
 # Configuration
 PORT = int(os.getenv('PORT', 8000))
 REPO_PATH = os.getenv('REPO_PATH', os.path.abspath(os.path.dirname(__file__)))
@@ -339,10 +342,17 @@ class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
                     name, value = cookie.strip().split('=', 1)
                     cookies[name] = value
             
+            # If message verification is disabled, mark all messages as verified
+            if not MESSAGE_VERIFICATION_ENABLED:
+                for message in messages:
+                    message['verified'] = 'true'
+                    message['signature'] = None
+            
             # Include current username in response
             response = {
                 'messages': messages,
-                'currentUsername': cookies.get('username', 'anonymous')
+                'currentUsername': cookies.get('username', 'anonymous'),
+                'messageVerificationEnabled': MESSAGE_VERIFICATION_ENABLED
             }
             
             self.send_response(HTTPStatus.OK)

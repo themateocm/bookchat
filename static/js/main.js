@@ -1,6 +1,7 @@
 // BookChat JavaScript (2025-01-08T12:20:30-05:00)
 
 let currentUsername = 'anonymous';
+let messageVerificationEnabled = false;
 
 // Initialize everything
 document.addEventListener('DOMContentLoaded', async () => {
@@ -46,6 +47,8 @@ async function loadMessages() {
         
         const data = await response.json();
         const messages = data.messages;
+        messageVerificationEnabled = data.messageVerificationEnabled;
+        
         const messagesDiv = document.getElementById('messages');
         const messagesContainer = document.getElementById('messages-container');
         messagesContainer.innerHTML = '';
@@ -71,6 +74,9 @@ async function loadMessages() {
                 usernameDisplay.textContent = `Current username: ${currentUsername}`;
             }
         }
+        
+        // Update verification status
+        updateGlobalVerificationStatus();
     } catch (error) {
         console.error('Error loading messages:', error);
     }
@@ -85,29 +91,63 @@ function createMessageElement(message) {
     const messageHeader = document.createElement('div');
     messageHeader.className = 'message-header';
     
+    // Create left section for author and verification status
+    const leftSection = document.createElement('div');
+    leftSection.className = 'header-left';
+    
+    // Add verification status indicator
+    const verificationStatus = document.createElement('span');
+    verificationStatus.className = 'verification-status';
+    
+    // Only show verification UI if enabled
+    if (messageVerificationEnabled) {
+        if (message.verified && message.verified.toLowerCase() === 'true') {
+            verificationStatus.className += ' verified';
+            verificationStatus.title = 'Message verified';
+            verificationStatus.innerHTML = '&#10003;';
+        } else if (message.signature) {
+            verificationStatus.className += ' pending';
+            verificationStatus.title = 'Verification pending';
+            verificationStatus.innerHTML = '&#8943;';
+        } else {
+            verificationStatus.className += ' unverified';
+            verificationStatus.title = 'Message not verified';
+            verificationStatus.innerHTML = '&#33;';
+        }
+        leftSection.appendChild(verificationStatus);
+    }
+    
     // Add author info
     const authorSpan = document.createElement('span');
     authorSpan.className = 'author';
     authorSpan.textContent = message.author || 'anonymous';
-    if (message.verified === 'true') {
-        authorSpan.classList.add('verified');
-        authorSpan.title = 'Verified message';
+    if (messageVerificationEnabled) {
+        if (message.verified && message.verified.toLowerCase() === 'true') {
+            authorSpan.classList.add('verified');
+            authorSpan.title = 'Verified message';
+        }
+        if (message.signature) {
+            authorSpan.classList.add('signed');
+        }
+        
+        // Add public key link if available and verification is enabled
+        if (message.public_key) {
+            const keyLink = document.createElement('a');
+            keyLink.className = 'key-link';
+            keyLink.href = `/${message.public_key}`; // Link to the public key file
+            keyLink.textContent = '&#128273;';
+            keyLink.title = `View ${message.author}'s public key`;
+            keyLink.target = '_blank'; // Open in new tab
+            leftSection.appendChild(keyLink);
+        }
     }
-    if (message.signature) {
-        authorSpan.classList.add('signed');
-    }
-    messageHeader.appendChild(authorSpan);
+    leftSection.appendChild(authorSpan);
     
-    // Add public key link if available
-    if (message.public_key) {
-        const keyLink = document.createElement('a');
-        keyLink.className = 'key-link';
-        keyLink.href = `/${message.public_key}`; // Link to the public key file
-        keyLink.textContent = '🔑';
-        keyLink.title = `View ${message.author}'s public key`;
-        keyLink.target = '_blank'; // Open in new tab
-        messageHeader.appendChild(keyLink);
-    }
+    messageHeader.appendChild(leftSection);
+    
+    // Create right section for timestamp and file
+    const rightSection = document.createElement('div');
+    rightSection.className = 'header-right';
     
     // Add timestamp
     const timestamp = document.createElement('span');
@@ -115,17 +155,46 @@ function createMessageElement(message) {
     const messageDate = new Date(message.createdAt);
     timestamp.textContent = messageDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     timestamp.title = messageDate.toLocaleString();
-    messageHeader.appendChild(timestamp);
+    rightSection.appendChild(timestamp);
     
-    // Add source file link if available
-    if (message.file) {
+    // Add source file link if available and verification is enabled
+    if (message.file && messageVerificationEnabled) {
         const sourceLink = document.createElement('a');
         sourceLink.className = 'source-link';
         sourceLink.href = `/messages/${message.file.split('/').pop()}`; // Get just the filename
-        sourceLink.textContent = '📄';
-        sourceLink.title = 'View source file';
+        sourceLink.textContent = '📄'; // Document icon
+        sourceLink.title = 'View message source file';
         sourceLink.target = '_blank'; // Open in new tab
-        messageHeader.appendChild(sourceLink);
+        rightSection.appendChild(sourceLink);
+    }
+    
+    messageHeader.appendChild(rightSection);
+    
+    // Add verification details button only if verification is enabled
+    if (messageVerificationEnabled) {
+        const verificationDetails = document.createElement('button');
+        verificationDetails.className = 'verification-details-btn';
+        verificationDetails.textContent = 'View Verification';
+        verificationDetails.onclick = () => {
+            const details = document.createElement('div');
+            details.className = 'verification-details';
+            details.innerHTML = `
+                <h4>Message Verification Details</h4>
+                <p><strong>Status:</strong> ${message.verified === 'true' ? 'Verified' : 'Unverified'}</p>
+                <p><strong>Timestamp:</strong> ${message.timestamp}</p>
+                ${message.signature ? `<p><strong>Signature:</strong> ${message.signature.substring(0, 32)}...</p>` : ''}
+                ${message.previousHash ? `<p><strong>Previous Hash:</strong> ${message.previousHash.substring(0, 32)}...</p>` : ''}
+            `;
+            
+            // Replace existing details or add new ones
+            const existingDetails = messageDiv.querySelector('.verification-details');
+            if (existingDetails) {
+                existingDetails.remove();
+            } else {
+                messageDiv.appendChild(details);
+            }
+        };
+        messageHeader.appendChild(verificationDetails);
     }
     
     messageDiv.appendChild(messageHeader);
@@ -146,7 +215,7 @@ function createMessageElement(message) {
         try {
             const data = JSON.parse(message.content);
             contentDiv.innerHTML = `
-                <div class="username-change-icon">👤</div>
+                <div class="username-change-icon">&#128100;</div>
                 <div class="username-change-text">
                     Changed username from <span class="old-username">${data.old_username}</span> 
                     to <span class="new-username">${data.new_username}</span>
@@ -168,7 +237,7 @@ function createMessageElement(message) {
         
         const signatureIcon = document.createElement('span');
         signatureIcon.className = 'signature-icon';
-        signatureIcon.textContent = '🔒';
+        signatureIcon.textContent = '&#128273;';
         signatureDiv.appendChild(signatureIcon);
         
         const signatureText = document.createElement('div');
@@ -216,8 +285,47 @@ async function sendMessage(content, type = 'message') {
     }
 }
 
-// Username validation regex - only allow alphanumeric and underscore, 3-20 chars
-const USERNAME_REGEX = /^[a-zA-Z0-9_]{3,20}$/;
+// Update global verification status based on all messages
+function updateGlobalVerificationStatus() {
+    // Only update if verification is enabled
+    if (!messageVerificationEnabled) {
+        const globalStatus = document.getElementById('global-verification-status');
+        if (globalStatus) {
+            globalStatus.style.display = 'none';
+        }
+        return;
+    }
+    
+    const messages = document.querySelectorAll('.message');
+    const globalStatus = document.getElementById('global-verification-status');
+    
+    if (!messages.length || !globalStatus) return;
+    
+    let allVerified = true;
+    let anyVerified = false;
+    
+    messages.forEach(message => {
+        const status = message.querySelector('.verification-status');
+        if (status && status.classList.contains('verified')) {
+            anyVerified = true;
+        } else {
+            allVerified = false;
+        }
+    });
+    
+    globalStatus.className = 'global-verification-status';
+    
+    if (allVerified) {
+        globalStatus.classList.add('verified');
+        globalStatus.textContent = 'Chat Verification Status: All Messages Verified';
+    } else if (anyVerified) {
+        globalStatus.classList.add('partial');
+        globalStatus.textContent = 'Chat Verification Status: Some Messages Verified';
+    } else {
+        globalStatus.classList.add('unverified');
+        globalStatus.textContent = 'Chat Verification Status: No Messages Verified';
+    }
+}
 
 async function changeUsername(newUsername) {
     try {
@@ -326,3 +434,6 @@ function setupMessageInput() {
         });
     }
 }
+
+// Username validation regex - only allow alphanumeric and underscore, 3-20 chars
+const USERNAME_REGEX = /^[a-zA-Z0-9_]{3,20}$/;
