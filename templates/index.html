@@ -17,14 +17,17 @@
     <div class="container">
         <!-- Header with username -->
         <div class="header">
-            <span id="current-username">Current username: anonymous</span>
             <!-- No-JS username change form -->
-            <form method="POST" action="/username" class="nojs-only">
+            <form method="POST" action="/username" class="nojs-only username-control">
                 <input type="text" name="new_username" placeholder="New username" required>
                 <button type="submit">Change Username</button>
+                <span class="current-username">(Current: {{ username }})</span>
             </form>
-            <!-- JS-only button -->
-            <button id="change-username-btn" class="js-only">Change Username</button>
+            <!-- JS-only username controls -->
+            <div class="username-control js-only">
+                <button id="change-username-btn">Change Username</button>
+                <span class="current-username">(Current: <span id="username-display"></span>)</span>
+            </div>
         </div>
 
         <!-- Messages container -->

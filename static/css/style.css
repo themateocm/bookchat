@@ -13,12 +13,13 @@ body {
 
 /* Header */
 .header {
-    padding: 10px 20px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 1rem;
+    margin-bottom: 1rem;
     background: #f5f5f5;
     border-bottom: 1px solid #ddd;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
 }
 
 .header button {
@@ -28,6 +29,17 @@ body {
     border: none;
     border-radius: 4px;
     cursor: pointer;
+}
+
+.username-control {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.current-username {
+    color: #666;
+    font-size: 0.9em;
 }
 
 /* Messages area */

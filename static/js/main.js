@@ -358,9 +358,9 @@ async function changeUsername(newUsername) {
         localStorage.setItem('username', newUsername);
         
         // Update display
-        const usernameDisplay = document.getElementById('current-username');
+        const usernameDisplay = document.getElementById('username-display');
         if (usernameDisplay) {
-            usernameDisplay.textContent = `Current username: ${newUsername}`;
+            usernameDisplay.textContent = newUsername;
         }
         
         return true;
@@ -373,6 +373,12 @@ async function changeUsername(newUsername) {
 
 // Add username change UI
 function setupUsernameUI() {
+    // Update username display
+    const usernameDisplay = document.getElementById('username-display');
+    if (usernameDisplay) {
+        usernameDisplay.textContent = currentUsername;
+    }
+
     // Set up change username button click handler
     const changeButton = document.getElementById('change-username-btn');
     if (changeButton) {
@@ -382,6 +388,11 @@ function setupUsernameUI() {
                 const success = await changeUsername(newUsername);
                 if (!success) {
                     alert('Failed to change username. Please try a different username.');
+                } else {
+                    // Update display after successful change
+                    if (usernameDisplay) {
+                        usernameDisplay.textContent = newUsername;
+                    }
                 }
             }
         };
