@@ -37,7 +37,11 @@ class KeyManager:
             # Convert hex signature back to bytes and write to file
             signature_bytes = bytes.fromhex(signature_hex)
             sig_path.write_bytes(signature_bytes)
-            
+
+            #todo the pub key should be stored in a way that
+            # it can be used again next time, and can also be
+            # downloaded by the web browser
+
             # Write public key to temp file
             pub_path = self.private_keys_dir / 'temp.pub'
             pub_path.write_text(public_key_pem)
@@ -224,37 +228,102 @@ class GitManager:
 
     def format_message(self, message_content, author, date_str, parent_id=None, signature=None, message_type=None):
         """Format a message with metadata footers."""
-        footers = []
-        footers.append(f"Author: {author}")
-        footers.append(f"Date: {date_str}")
+        footers = [
+            f"Author: {author}",
+            f"Date: {date_str}",
+            f"Public-Key: identity/public_keys/{author}.pub"
+        ]
         
         if parent_id:
             footers.append(f"Parent-Message: {parent_id}")
+        
         if signature:
             footers.append(f"Signature: {signature}")
+            
         if message_type:
             footers.append(f"Type: {message_type}")
-            
-        # Put message first, then metadata after the standard email signature separator
-        return message_content + "\n\n-- \n" + "\n".join(footers)
+        
+        # Combine message and footers with standard email separator
+        return f"{message_content.rstrip()}\n\n-- \n{chr(10).join(footers)}"
 
     def parse_message(self, content):
         """Parse a message into metadata and content."""
-        # Split content and footers using standard email signature separator
-        parts = content.split("\n-- \n", 1)
+        # Split on standard email signature separator
+        parts = content.split('\n-- \n', 1)
         if len(parts) != 2:
-            return {}, content.strip()  # No footers found
+            return {}, parts[0].strip()
             
-        message, footers_text = parts
-        
-        # Parse footers
+        message = parts[0].strip()
         metadata = {}
-        for line in footers_text.split("\n"):
-            if ": " in line:
-                key, value = line.split(": ", 1)
+        
+        # Parse metadata footers
+        for line in parts[1].strip().split('\n'):
+            if ': ' in line:
+                key, value = line.split(': ', 1)
                 metadata[key] = value
                 
-        return metadata, message.strip()
+        return metadata, message
+
+    def read_message(self, filename):
+        """Read a message from a file."""
+        filepath = self.messages_dir / filename
+        if not filepath.exists():
+            return None
+            
+        content = filepath.read_text()
+        
+        # First try to parse as JSON for backward compatibility
+        try:
+            json_data = json.loads(content)
+            if isinstance(json_data, dict):
+                # Convert old JSON format to new format
+                return {
+                    'id': filename,
+                    'content': json_data.get('content', ''),
+                    'author': json_data.get('author', 'anonymous'),
+                    'createdAt': json_data.get('timestamp'),  
+                    'parent_id': json_data.get('parent_id'),
+                    'signed': 'signature' in json_data,
+                    'verified': str(json_data.get('verified', False)).lower(),
+                    'type': json_data.get('type', 'message')
+                }
+        except json.JSONDecodeError:
+            # Not JSON, parse as plaintext with footers
+            metadata, message = self.parse_message(content)
+            
+            # Try to parse date in multiple formats
+            date = metadata.get('Date')
+            if date:
+                try:
+                    # Try to parse as ISO format first
+                    parsed_date = datetime.fromisoformat(date.replace('Z', '+00:00'))
+                    # Format as RFC 3339 with proper timezone offset
+                    date_str = parsed_date.astimezone().strftime('%Y-%m-%dT%H:%M:%S%z')
+                    date = date_str[:-2] + ':' + date_str[-2:]  # Insert colon in timezone offset
+                except ValueError:
+                    try:
+                        # Try to parse from filename (YYYYMMDD_HHMMSS)
+                        parts = filename.split('_')
+                        if len(parts) >= 2:
+                            date = f"{parts[0][:4]}-{parts[0][4:6]}-{parts[0][6:]}T{parts[1][:2]}:{parts[1][2:4]}:{parts[1][4:]}Z"
+                    except:
+                        pass
+            
+            # Verify signature if present
+            verified = self.verify_message(message, metadata)
+            metadata['verified'] = str(verified if verified is not None else False).lower()
+            
+            return {
+                'id': filename,
+                'content': message,
+                'author': metadata.get('Author', 'anonymous'),
+                'createdAt': date,  
+                'parent_id': metadata.get('Parent-Message'),
+                'signed': 'Signature' in metadata,
+                'verified': metadata['verified'],
+                'type': metadata.get('Type', 'message'),
+                'public_key': metadata.get('Public-Key')
+            }
 
     def verify_message(self, content, metadata):
         """Verify message signature if present."""
@@ -370,30 +439,6 @@ class GitManager:
             self.sync_changes_to_github(filepath, author)
             
         return filename
-
-    def read_message(self, filename):
-        """Read a message from a file."""
-        filepath = self.messages_dir / filename
-        if not filepath.exists():
-            return None
-            
-        content = filepath.read_text()
-        metadata, message = self.parse_message(content)
-        
-        # Verify signature if present
-        verified = self.verify_message(message, metadata)
-        metadata['verified'] = str(verified if verified is not None else False).lower()
-        
-        return {
-            'id': filename,
-            'content': message,
-            'author': metadata.get('Author', 'anonymous'),
-            'date': metadata.get('Date'),
-            'parent_id': metadata.get('Parent-Message'),
-            'signed': 'Signature' in metadata,
-            'verified': metadata['verified'],
-            'type': metadata.get('Type', 'message')
-        }
 
 def main():
     """Main function for testing"""

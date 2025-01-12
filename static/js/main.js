@@ -51,7 +51,7 @@ async function loadMessages() {
         messagesContainer.innerHTML = '';
         
         // Sort messages by date (newest at bottom)
-        messages.sort((a, b) => new Date(b.date) - new Date(a.date));
+        messages.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
         messages.reverse();
         
         // Add messages to container
@@ -98,10 +98,21 @@ function createMessageElement(message) {
     }
     messageHeader.appendChild(authorSpan);
     
+    // Add public key link if available
+    if (message.public_key) {
+        const keyLink = document.createElement('a');
+        keyLink.className = 'key-link';
+        keyLink.href = `/${message.public_key}`; // Link to the public key file
+        keyLink.textContent = '🔑';
+        keyLink.title = `View ${message.author}'s public key`;
+        keyLink.target = '_blank'; // Open in new tab
+        messageHeader.appendChild(keyLink);
+    }
+    
     // Add timestamp
     const timestamp = document.createElement('span');
     timestamp.className = 'timestamp';
-    const messageDate = new Date(message.timestamp);
+    const messageDate = new Date(message.createdAt);
     timestamp.textContent = messageDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     timestamp.title = messageDate.toLocaleString();
     messageHeader.appendChild(timestamp);
@@ -184,13 +195,9 @@ async function sendMessage(content, type = 'message') {
         const response = await fetch('/messages', {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json'
+                'Content-Type': 'text/plain'
             },
-            body: JSON.stringify({
-                content,
-                type,
-                author: currentUsername
-            })
+            body: content
         });
         
         if (!response.ok) {

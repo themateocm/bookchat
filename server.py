@@ -156,6 +156,18 @@ class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
                 except FileNotFoundError:
                     logger.error(f"Static file not found: {file_path}")
                     self.send_error(HTTPStatus.NOT_FOUND)
+            elif path.startswith('/identity/public_keys/'):
+                # Serve public key files
+                username = path.split('/')[-1].split('.')[0]
+                public_key_path = os.path.join(REPO_PATH, 'identity/public_keys', f'{username}.pub')
+                if os.path.exists(public_key_path):
+                    self.send_response(HTTPStatus.OK)
+                    self.send_header('Content-Type', 'text/plain')
+                    self.end_headers()
+                    with open(public_key_path, 'r') as f:
+                        self.wfile.write(f.read().encode('utf-8'))
+                else:
+                    self.send_error(HTTPStatus.NOT_FOUND, "Public key not found")
             else:
                 logger.info(f"Attempting to serve unknown path: {path}")
                 super().do_GET()
@@ -189,9 +201,9 @@ class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
             content_length = int(self.headers.get('Content-Length', 0))
             logger.debug(f"Content length: {content_length}")
             
-            # Read and parse the body
-            body = self.rfile.read(content_length).decode('utf-8')
-            logger.debug(f"Received message body: {body[:200]}...")  # Log first 200 chars to avoid huge logs
+            # Read the body as plaintext
+            content = self.rfile.read(content_length).decode('utf-8')
+            logger.debug(f"Received message body: {content[:200]}...")  # Log first 200 chars to avoid huge logs
             
             # Get username from cookie if available
             cookies = {}
@@ -200,19 +212,9 @@ class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
                     name, value = cookie.strip().split('=', 1)
                     cookies[name] = value
             
-            # Handle both JSON and form data
-            if self.headers.get('Content-Type') == 'application/json':
-                data = json.loads(body)
-                content = data.get('content')
-                # Use cookie username if available, otherwise use from request
-                author = cookies.get('username') or data.get('author', 'anonymous')
-                logger.info(f"Processing JSON message from {author}: {content}")
-            else:
-                # Parse form data
-                form_data = parse_qs(body)
-                content = form_data.get('content', [''])[0]
-                author = cookies.get('username', 'anonymous')  # Use cookie username if available
-                logger.info(f"Processing form message from {author}: {content}")
+            # Get author from cookie
+            author = cookies.get('username', 'anonymous')
+            logger.info(f"Processing message from {author}: {content}")
             
             # Check if user has a key pair
             has_key = storage.key_manager.has_key_pair(author)
@@ -237,21 +239,15 @@ class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
                 new_message = messages[0] if messages else None
                 logger.info(f"Retrieved new message: {new_message}")
                 
-                # Return response based on content type
-                if self.headers.get('Content-Type') == 'application/json':
-                    self.send_response(HTTPStatus.OK)
-                    self.send_header('Content-Type', 'application/json')
-                    self.end_headers()
-                    self.wfile.write(json.dumps(new_message).encode('utf-8'))
-                else:
-                    # Redirect back to home page for form submission
-                    self.send_response(HTTPStatus.FOUND)
-                    self.send_header('Location', '/')
-                    self.end_headers()
+                # Return response
+                self.send_response(HTTPStatus.OK)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps(new_message).encode('utf-8'))
             else:
-                raise Exception("Failed to save message")
+                self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Failed to save message")
         except Exception as e:
-            logger.error(f"Error in message posting", exc_info=True)
+            logger.error(f"Error in message post handler", exc_info=True)
             self.handle_error(e)
 
     def handle_username_post(self):

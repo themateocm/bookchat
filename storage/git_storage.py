@@ -30,7 +30,12 @@ class GitStorage(StorageBackend):
         self.repo_path = Path(repo_path)
         self.messages_dir = self.repo_path / 'messages'
         self.git_manager = GitManager(str(repo_path))
-        self.key_manager = KeyManager()  # Initialize KeyManager
+        
+        # Initialize key manager with the same key directories as git manager
+        private_keys_dir = os.environ.get('KEYS_DIR', str(self.repo_path / 'keys'))
+        public_keys_dir = os.environ.get('PUBLIC_KEYS_DIR', str(self.repo_path / 'identity/public_keys'))
+        self.key_manager = KeyManager(private_keys_dir, public_keys_dir)
+        
         logger.debug(f"Messages directory: {self.messages_dir}")
         
         # Check if messages directory exists
@@ -102,35 +107,34 @@ class GitStorage(StorageBackend):
                 logger.error(f"Messages directory does not exist: {self.messages_dir}")
                 return False
             
-            # Check directory permissions
-            logger.debug(f"Messages directory permissions: {oct(os.stat(self.messages_dir).st_mode)}")
-            
-            # Format message content
-            message_data = {
-                'author': user,
-                'content': content,
-                'timestamp': timestamp.isoformat()
-            }
-            
-            # Sign message if requested and user has a key pair
-            if sign and self.key_manager.has_key_pair(user):
+            # Sign message if requested
+            signature = None
+            if sign:
                 try:
-                    signature = self.key_manager.sign_message(content, user)
-                    if signature:
-                        message_data['signature'] = signature
-                        message_data['public_key'] = self.key_manager.get_public_key(user)
-                        message_data['verified'] = True
+                    signature = self.git_manager.key_manager.sign_message(content)
+                    logger.debug(f"Message signed successfully: {signature[:32]}...")
                 except Exception as e:
                     logger.error(f"Failed to sign message: {e}")
                     # Continue without signature
             
-            logger.debug(f"Message data: {message_data}")
+            # Format message with metadata footers
+            # Use RFC 3339 format that JavaScript can definitely parse
+            date_str = timestamp.astimezone().strftime('%Y-%m-%dT%H:%M:%S%z')
+            # Insert colon in timezone offset (e.g. +0000 -> +00:00)
+            date_str = date_str[:-2] + ':' + date_str[-2:]
+            
+            formatted_message = self.git_manager.format_message(
+                content,
+                user,
+                date_str,
+                signature=signature
+            )
             
             # Write message to file
             logger.info(f"Writing message to: {message_path}")
             try:
                 with open(message_path, 'w') as f:
-                    json.dump(message_data, f, indent=2)
+                    f.write(formatted_message)
                 logger.debug(f"Successfully wrote message to file: {message_path}")
                 logger.debug(f"File exists after write: {message_path.exists()}")
                 logger.debug(f"File contents after write: {message_path.read_text() if message_path.exists() else 'FILE NOT FOUND'}")
@@ -180,12 +184,11 @@ class GitStorage(StorageBackend):
                 
                 logger.info("Message saved successfully")
                 return True
-            except subprocess.CalledProcessError as e:
-                logger.error(f"Git operation failed: {e.stdout}\n{e.stderr}")
+            except Exception as e:
+                logger.error(f"Failed to commit message: {e}\n{traceback.format_exc()}")
                 return False
-                
         except Exception as e:
-            logger.error(f"Failed to save message: {e}\n{traceback.format_exc()}")
+            logger.error(f"Error saving message: {e}\n{traceback.format_exc()}")
             return False
     
     def get_messages(self, limit: Optional[int] = None) -> List[Dict[str, Any]]:
@@ -198,77 +201,34 @@ class GitStorage(StorageBackend):
             List of message dictionaries
         """
         messages = []
+        
         try:
-            logger.debug(f"Getting messages with limit: {limit}")
+            # Get all message files
             message_files = sorted(
                 self.messages_dir.glob('*.txt'),
                 key=lambda x: x.stat().st_mtime,
                 reverse=True
             )
-            logger.debug(f"Found {len(message_files)} message files")
-            
-            if limit is not None:
+            if limit:
                 message_files = message_files[:limit]
             
-            for file_path in message_files:
+            # Read each message file
+            for message_file in message_files:
                 try:
-                    with open(file_path) as f:
-                        content = f.read()
-                    
-                    message_dict = {'file': str(file_path)}
-                    
-                    # First try to parse as JSON
-                    try:
-                        json_content = json.loads(content)
-                        if isinstance(json_content, dict):
-                            # Convert 'user' to 'author' for consistency
-                            if 'user' in json_content and 'author' not in json_content:
-                                json_content['author'] = json_content.pop('user')
-                            message_dict.update(json_content)
-                            messages.append(message_dict)
-                            continue
-                    except json.JSONDecodeError:
-                        # If JSON parsing fails, treat as plaintext
-                        pass
-                    
-                    # Handle as plaintext
-                    message_dict['content'] = content
-                    
-                    # Try to extract date and author if present
-                    for line in content.split('\n'):
-                        if line.startswith('Date:'):
-                            try:
-                                message_dict['timestamp'] = line.replace('Date:', '').strip()
-                            except:
-                                pass
-                        elif line.startswith('Author:'):
-                            try:
-                                message_dict['author'] = line.replace('Author:', '').strip()
-                            except:
-                                pass
-                    
-                    # Extract actual message content (everything after metadata)
-                    message_lines = content.split('\n')
-                    message_start = 0
-                    for i, line in enumerate(message_lines):
-                        if not line.strip():  # First empty line marks end of metadata
-                            message_start = i + 1
-                            break
-                    
-                    message_dict['content'] = '\n'.join(message_lines[message_start:]).strip()
-                    messages.append(message_dict)
-                    
+                    message = self.git_manager.read_message(message_file.name)
+                    if message:
+                        # Add file link
+                        message['file'] = f"messages/{message_file.name}"
+                        messages.append(message)
                 except Exception as e:
-                    logger.error(f"Failed to read message file {file_path}: {e}")
-                    # Continue processing other files even if one fails
+                    logger.error(f"Error reading message {message_file}: {e}")
                     continue
             
-            logger.debug(f"Returning {len(messages)} messages")
             return messages
         except Exception as e:
-            logger.error(f"Failed to retrieve messages: {e}\n{traceback.format_exc()}")
+            logger.error(f"Failed to get messages: {e}\n{traceback.format_exc()}")
             return []
-    
+
     def get_message_by_id(self, message_id: str) -> Optional[Dict[str, Any]]:
         """Retrieve a specific message by ID.
         
@@ -279,15 +239,21 @@ class GitStorage(StorageBackend):
             Message dictionary if found, None otherwise
         """
         try:
-            logger.debug(f"Getting message by ID: {message_id}")
-            message_path = self.messages_dir / f"{message_id}.txt"
-            if message_path.exists():
-                with open(message_path) as f:
-                    message = json.load(f)
-                    logger.debug(f"Found message: {message}")
-                    return message
-            logger.debug(f"Message not found: {message_id}")
-            return None
+            # Message ID is the filename
+            message_path = self.messages_dir / message_id
+            if not message_path.exists():
+                logger.warning(f"Message not found: {message_id}")
+                return None
+            
+            # Read and parse the message
+            message = self.git_manager.read_message(message_id)
+            if not message:
+                logger.error(f"Failed to parse message: {message_id}")
+                return None
+            
+            # Add file link
+            message['file'] = f"messages/{message_id}"
+            return message
         except Exception as e:
-            logger.error(f"Failed to retrieve message by ID: {e}\n{traceback.format_exc()}")
+            logger.error(f"Error retrieving message {message_id}: {e}\n{traceback.format_exc()}")
             return None
