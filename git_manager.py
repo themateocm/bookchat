@@ -13,7 +13,8 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 import time
 import logging
 
-logger = logging.getLogger(__name__)
+# Create a dedicated logger for git operations
+logger = logging.getLogger('git')
 
 class KeyManager:
     def __init__(self, private_keys_dir, public_keys_dir):
@@ -161,22 +162,50 @@ class GitManager:
     def _run_git_command(self, command, cwd=None):
         """Run a git command with suppressed output unless there's an error."""
         try:
+            env = os.environ.copy()
+            # Suppress git terminal prompts
+            env['GIT_TERMINAL_PROMPT'] = '0'
+            
+            logger.debug(f"Running git command: {' '.join(command)}")
             result = subprocess.run(
                 command,
                 cwd=cwd or str(self.repo_path),
                 check=True,
                 text=True,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE
+                stderr=subprocess.PIPE,
+                env=env
             )
-            # Log any stderr output at debug level
+            
+            # Log output for debugging
+            if result.stdout:
+                logger.debug(f"Git command stdout: {result.stdout}")
             if result.stderr:
                 logger.debug(f"Git command stderr: {result.stderr}")
+                
+            # Only log push messages at debug level
+            if result.stderr and result.stderr.startswith('To '):
+                logger.debug(f"Git push result: {result.stderr}")
+            # Log other stderr messages that aren't common informational messages
+            elif result.stderr and not any(msg in result.stderr for msg in [
+                'nothing to commit',
+                'branch is up to date',
+                'Already up to date',
+                'working tree clean'
+            ]):
+                logger.debug(f"Git command stderr (non-standard): {result.stderr}")
+            
             return result
         except subprocess.CalledProcessError as e:
-            logger.error(f"Git command failed: {' '.join(command)}")
-            logger.debug(f"Command output: {e.output if hasattr(e, 'output') else ''}")
-            logger.debug(f"Command stderr: {e.stderr if hasattr(e, 'stderr') else ''}")
+            # Only log real errors, not just informational messages
+            if e.stderr and not any(msg in e.stderr for msg in [
+                'nothing to commit',
+                'branch is up to date',
+                'Already up to date',
+                'working tree clean'
+            ]):
+                logger.error(f"Git command failed: {' '.join(command)}")
+                logger.debug(f"Command stderr: {e.stderr}")
             raise
 
     def init_git_repo(self):

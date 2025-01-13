@@ -45,11 +45,19 @@ error_handler = logging.FileHandler('logs/error.log')
 error_handler.setLevel(logging.ERROR)
 error_handler.setFormatter(logging.Formatter(log_format))
 
-# Configure console handler with simpler format and WARNING level by default
+# Configure console handler with simpler format and ERROR level only
 console_handler = logging.StreamHandler()
-console_level = logging.DEBUG if os.getenv('BOOKCHAT_DEBUG') else logging.WARNING
-console_handler.setLevel(console_level)
+console_handler.setLevel(logging.ERROR)  # Only show ERROR level messages in console
 console_handler.setFormatter(logging.Formatter(console_format))
+
+# Create git logger with special handling
+git_logger = logging.getLogger('git')
+git_logger.setLevel(logging.INFO)  # Set to INFO to ignore DEBUG messages
+git_handler = logging.FileHandler('logs/git.log')
+git_handler.setLevel(logging.INFO)
+git_handler.setFormatter(logging.Formatter(log_format))
+git_logger.addHandler(git_handler)
+git_logger.propagate = False  # Don't propagate to root logger
 
 # Add all handlers to root logger
 root.addHandler(debug_handler)
@@ -64,8 +72,8 @@ root.setLevel(logging.DEBUG)
 logger = logging.getLogger('bookchat')
 
 # Log initial debug state
-logger.info(f"Console logging level: {logging.getLevelName(console_level)}")
-if console_level == logging.DEBUG:
+logger.info(f"Console logging level: {logging.getLevelName(console_handler.level)}")
+if console_handler.level == logging.DEBUG:
     logger.info("Debug logging enabled via BOOKCHAT_DEBUG environment variable")
 
 # Load environment variables
@@ -277,13 +285,17 @@ class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
                         try:
                             # Get the latest message file (the one we just saved)
                             latest_message = max(storage.messages_dir.glob('*.txt'), key=os.path.getctime)
-                            storage.git_manager.add_and_commit_file(
-                                str(latest_message),
-                                f"Add message from {author}"
-                            )
-                            storage.git_manager.push()
+                            try:
+                                storage.git_manager.add_and_commit_file(
+                                    str(latest_message),
+                                    f"Add message from {author}"
+                                )
+                                storage.git_manager.push()
+                                logger.debug(f"Git operations completed successfully for {latest_message}")
+                            except Exception as e:
+                                logger.debug(f"Git operations completed with non-critical error: {e}")
                         except Exception as e:
-                            logger.error(f"Git operations failed: {e}", exc_info=True)
+                            logger.error(f"Failed to process git operations: {e}")
                     
                     threading.Thread(target=git_ops, daemon=True).start()
                     
