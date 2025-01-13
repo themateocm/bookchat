@@ -127,7 +127,11 @@ def main():
 
     # Write to output file
     with open(OUTPUT_FILE, "w") as f:
+        # write the root repo
+        f.write(f"https://github.com/{GITHUB_REPO}\n")
+        # write all the forks
         f.write("\n".join(all_forks))
+        # write a new line
         f.write("\n")
 
     print(f"Forks written to {OUTPUT_FILE}")
