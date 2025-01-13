@@ -63,36 +63,46 @@
 
             <h3>2. Command-line Verification</h3>
             <div class="code-block">
-# 1. Extract signature and message content
-grep -v "SIGNATURE:" message_file.txt > message_content.txt
-grep "SIGNATURE:" message_file.txt | cut -d' ' -f2 > signature.hex
-
-# 2. Convert hex signature to binary
-xxd -r -p signature.hex > signature.bin
-
-# 3. Verify using author's public key
-openssl dgst -sha256 -verify author_public_key.pub -signature signature.bin message_content.txt</div>
+                <div class="code-explanation">
+                    <p>These commands extract and verify the message's digital signature:</p>
+                </div>
+                <pre><code># Extract signature and content<br>
+grep -v "SIGNATURE:" message_file.txt > message_content.txt<br>
+grep "SIGNATURE:" message_file.txt | cut -d' ' -f2 > signature.hex<br>
+<br>
+# Convert signature format<br>
+xxd -r -p signature.hex > signature.bin<br>
+<br>
+# Verify with author's public key<br>
+openssl dgst -sha256 -verify author_public_key.pub -signature signature.bin message_content.txt</code></pre>
+            </div>
 
             <h3>3. Git History Verification</h3>
             <div class="code-block">
-# Verify file hasn't been modified
-git log --follow --patch message_file.txt
-
-# Get current commit hash
-git rev-parse HEAD
-
-# Verify remote integrity
-git remote -v
-git fetch origin
-git verify-commit origin/main</div>
+                <div class="code-explanation">
+                    <p>These commands verify the message hasn't been modified:</p>
+                </div>
+                <pre><code># Check file history<br>
+git log --follow --patch message_file.txt<br>
+<br>
+# Verify current state<br>
+git rev-parse HEAD<br>
+git remote -v<br>
+git fetch origin<br>
+git verify-commit origin/main</code></pre>
+            </div>
 
             <h3>4. Timestamp Verification</h3>
             <div class="code-block">
-# Compare message timestamp with git commit
-git log --format=%ai -- message_file.txt | head -n1
-
-# Verify against known timestamp
-git log --since="{{ current_time }}" --format=%H message_file.txt</div>
+                <div class="code-explanation">
+                    <p>These commands verify the message timestamp:</p>
+                </div>
+                <pre><code># Compare message and commit timestamps<br>
+git log --format=%ai -- message_file.txt | head -n1<br>
+<br>
+# Verify against known timestamp<br>
+git log --since="{{ current_time }}" --format=%H message_file.txt</code></pre>
+            </div>
         </div>
 
         <div class="verification-section">

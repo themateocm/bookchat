@@ -16,6 +16,7 @@
     --input-bg: white;
     --input-border: #ddd;
     --input-text: #1e293b;
+    --bg-code: #f5f5f5;
 }
 
 [data-theme="dark"] {
@@ -35,6 +36,7 @@
     --input-bg: #333333;
     --input-border: #404040;
     --input-text: #e0e0e0;
+    --bg-code: #333333;
 }
 
 body {
@@ -562,14 +564,137 @@ body {
 }
 
 .code-block {
-    background: var(--bg-secondary);
-    color: var(--text-primary);
-    padding: 15px;
-    border-radius: 4px;
+    background: var(--bg-code);
+    border-radius: 6px;
+    padding: 1rem;
+    margin: 1rem 0;
+    width: 100%;
+    max-width: 100%;
     overflow-x: auto;
-    font-family: monospace;
-    margin: 10px 0;
-    border: 1px solid var(--border-color);
+}
+
+.code-block pre {
+    margin: 0;
+    white-space: pre !important;
+    width: max-content;
+    min-width: 100%;
+}
+
+.code-block code {
+    font-family: 'Fira Code', monospace;
+    font-size: 0.9rem;
+    white-space: pre !important;
+    display: block;
+}
+
+.code-block::-webkit-scrollbar {
+    height: 8px;
+}
+
+.code-block::-webkit-scrollbar-track {
+    background: var(--bg-secondary);
+    border-radius: 4px;
+}
+
+.code-block::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 4px;
+}
+
+.code-block::-webkit-scrollbar-thumb:hover {
+    background: var(--text-secondary);
+}
+
+/* Verification Section Styles */
+.verification-section {
+    background: var(--bg-secondary);
+    border-radius: 8px;
+    padding: 2rem;
+    margin: 2rem 0;
+}
+
+.verification-overview {
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 1.5rem;
+    margin-bottom: 1.5rem;
+}
+
+.verification-levels {
+    display: flex;
+    gap: 1rem;
+    margin: 1.5rem 0;
+}
+
+.level-toggle {
+    padding: 0.5rem 1rem;
+    border: 2px solid var(--border-color);
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.level-toggle.active {
+    background: var(--button-bg);
+    border-color: var(--button-bg);
+    color: white;
+}
+
+.verification-step {
+    margin: 2rem 0;
+}
+
+.code-block {
+    background: var(--bg-secondary);
+    border-radius: 6px;
+    padding: 1rem;
+    margin: 1rem 0;
+}
+
+.code-explanation {
+    margin-bottom: 1rem;
+    color: var(--text-secondary);
+}
+
+.code-block pre {
+    margin: 0;
+    overflow-x: auto;
+}
+
+.code-block code {
+    font-family: 'Fira Code', monospace;
+    font-size: 0.9rem;
+}
+
+.verification-help details {
+    margin: 1rem 0;
+    padding: 1rem;
+    background: var(--bg-secondary);
+    border-radius: 6px;
+}
+
+.verification-help summary {
+    cursor: pointer;
+    font-weight: 500;
+    margin-bottom: 1rem;
+}
+
+.verification-help details[open] summary {
+    margin-bottom: 1rem;
+}
+
+/* Basic/Advanced toggle animation */
+.verification-level {
+    transition: opacity 0.3s ease;
+}
+
+.verification-level[style*="display: none"] {
+    opacity: 0;
+}
+
+.verification-level {
+    opacity: 1;
 }
 
 .status-indicator {
