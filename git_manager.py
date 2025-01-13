@@ -10,6 +10,7 @@ import re
 import shutil
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
+import time
 
 class KeyManager:
     def __init__(self, private_keys_dir, public_keys_dir):
@@ -120,6 +121,11 @@ class GitManager:
         
         # Make GitHub optional
         self.use_github = bool(self.github_token and self.repo_name and self.should_sync_to_github)
+        
+        # Add last pull timestamp to prevent too frequent pulls
+        self.last_pull_time = 0
+        self.pull_cooldown = 5  # Minimum seconds between pulls
+        
         if self.use_github:
             print("GitHub synchronization enabled")
             # Initialize GitHub API client
@@ -216,8 +222,47 @@ class GitManager:
             print(f"Failed to sync to GitHub: {e}")
             # Continue without GitHub sync - don't raise the error
 
+    def pull_from_github(self):
+        """Pull latest changes from GitHub."""
+        if not self.use_github:
+            return False
+
+        # Check if enough time has passed since last pull
+        current_time = time.time()
+        if current_time - self.last_pull_time < self.pull_cooldown:
+            return False
+
+        try:
+            # Fetch latest changes
+            subprocess.run(['git', 'fetch', 'origin', 'main'], cwd=str(self.repo_path), check=True)
+            
+            # Check if we're behind origin/main
+            status = subprocess.run(
+                ['git', 'rev-list', 'HEAD..origin/main', '--count'],
+                cwd=str(self.repo_path),
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            
+            if int(status.stdout.strip()) > 0:
+                # We're behind, pull changes
+                subprocess.run(['git', 'pull', 'origin', 'main'], cwd=str(self.repo_path), check=True)
+                print("Successfully pulled latest changes from GitHub")
+                self.last_pull_time = current_time
+                return True
+                
+            self.last_pull_time = current_time
+            return False
+        except subprocess.CalledProcessError as e:
+            print(f"Failed to pull from GitHub: {e}")
+            return False
+            
     def ensure_repo_exists(self):
         """Ensure the repository exists locally, clone if it doesn't."""
+        if self.use_github:
+            self.pull_from_github()
+            
         # Create messages directory if it doesn't exist
         self.messages_dir.mkdir(parents=True, exist_ok=True)
         
@@ -251,7 +296,12 @@ class GitManager:
         # Split on standard email signature separator
         parts = content.split('\n-- \n', 1)
         if len(parts) != 2:
-            return {}, parts[0].strip()
+            # If no metadata footers, treat entire content as message
+            return {
+                'Author': 'anonymous',
+                'Date': None,
+                'Public-Key': None
+            }, parts[0].strip()
             
         message = parts[0].strip()
         metadata = {}
@@ -264,13 +314,20 @@ class GitManager:
                 
         return metadata, message
 
-    def read_message(self, filename):
+    def read_message(self, filename, skip_pull=False):
         """Read a message from a file."""
+        if self.use_github and not skip_pull:
+            self.pull_from_github()
+            
         filepath = self.messages_dir / filename
         if not filepath.exists():
             return None
             
         content = filepath.read_text()
+        
+        # Skip .gitkeep and non-text files
+        if filename == '.gitkeep' or not content.strip():
+            return None
         
         # First try to parse as JSON for backward compatibility
         try:
@@ -307,7 +364,22 @@ class GitManager:
                         if len(parts) >= 2:
                             date = f"{parts[0][:4]}-{parts[0][4:6]}-{parts[0][6:]}T{parts[1][:2]}:{parts[1][2:4]}:{parts[1][4:]}Z"
                     except:
-                        pass
+                        # If all date parsing fails, use file modification time
+                        date = datetime.fromtimestamp(filepath.stat().st_mtime).strftime('%Y-%m-%dT%H:%M:%S%z')
+                        date = date[:-2] + ':' + date[-2:]  # Insert colon in timezone offset
+            else:
+                # No date in metadata, use file modification time
+                date = datetime.fromtimestamp(filepath.stat().st_mtime).strftime('%Y-%m-%dT%H:%M:%S%z')
+                date = date[:-2] + ':' + date[-2:]  # Insert colon in timezone offset
+            
+            # Try to get author from metadata or filename
+            author = metadata.get('Author', 'anonymous')
+            if author == 'anonymous' and '_' in filename:
+                try:
+                    # Try to get author from filename (YYYYMMDD_HHMMSS_author.txt)
+                    author = filename.split('_')[2].rsplit('.', 1)[0]
+                except:
+                    pass
             
             # Verify signature if present
             verified = self.verify_message(message, metadata)
@@ -316,13 +388,12 @@ class GitManager:
             return {
                 'id': filename,
                 'content': message,
-                'author': metadata.get('Author', 'anonymous'),
-                'createdAt': date,  
+                'author': author,
+                'createdAt': date,
                 'parent_id': metadata.get('Parent-Message'),
                 'signed': 'Signature' in metadata,
                 'verified': metadata['verified'],
-                'type': metadata.get('Type', 'message'),
-                'public_key': metadata.get('Public-Key')
+                'type': metadata.get('Type', 'message')
             }
 
     def verify_message(self, content, metadata):

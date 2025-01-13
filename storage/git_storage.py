@@ -74,6 +74,10 @@ class GitStorage(StorageBackend):
             logger.debug(f"Ensuring messages directory exists: {self.messages_dir}")
             os.makedirs(self.messages_dir, exist_ok=True)
             
+            # Initialize git and pull latest changes
+            if self.git_manager.use_github:
+                self.git_manager.pull_from_github()
+            
             # Check if directory was created successfully
             if not self.messages_dir.exists():
                 logger.error("Failed to create messages directory")
@@ -209,34 +213,38 @@ class GitStorage(StorageBackend):
         Returns:
             List of message dictionaries
         """
+        # Pull latest changes once at the start
+        if self.git_manager.use_github:
+            self.git_manager.pull_from_github()
+            
         messages = []
         
+        # List all files in messages directory
         try:
-            # Get all message files
             message_files = sorted(
-                self.messages_dir.glob('*.txt'),
-                key=lambda x: x.name,  # Sort by filename which contains timestamp
+                [f for f in self.messages_dir.glob('*.txt') if f.is_file()],
+                key=lambda x: x.stat().st_mtime,
                 reverse=True
             )
-            if limit:
-                message_files = message_files[:limit]
-            
-            # Read each message file
-            for message_file in message_files:
-                try:
-                    message = self.git_manager.read_message(message_file.name)
-                    if message:
-                        # Add file link
-                        message['file'] = f"messages/{message_file.name}"
-                        messages.append(message)
-                except Exception as e:
-                    logger.error(f"Error reading message {message_file}: {e}")
-                    continue
-            
-            return messages
         except Exception as e:
-            logger.error(f"Failed to get messages: {e}\n{traceback.format_exc()}")
-            return []
+            logger.error(f"Failed to list messages directory: {e}")
+            return messages
+            
+        # Process each message file
+        for message_file in message_files:
+            try:
+                # Don't pull for each message, we already pulled at the start
+                message = self.git_manager.read_message(message_file.name, skip_pull=True)
+                if message:  # Skip None results (e.g. .gitkeep)
+                    messages.append(message)
+                    if limit and len(messages) >= limit:
+                        break
+            except Exception as e:
+                logger.error(f"Failed to read message {message_file}: {e}")
+                # Continue processing other messages
+                continue
+                
+        return messages
 
     def get_message_by_id(self, message_id: str) -> Optional[Dict[str, Any]]:
         """Retrieve a specific message by ID.
