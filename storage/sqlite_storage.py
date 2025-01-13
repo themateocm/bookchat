@@ -5,8 +5,12 @@ from datetime import datetime
 from typing import List, Dict, Optional, Any
 from pathlib import Path
 import uuid
+import logging
 
 from storage import StorageBackend
+from .archive_manager import MessageArchiver
+
+logger = logging.getLogger(__name__)
 
 class SQLiteStorage(StorageBackend):
     """Storage backend that uses SQLite for message storage."""
@@ -19,7 +23,12 @@ class SQLiteStorage(StorageBackend):
         """
         self.db_path = Path(db_path)
         self.db_dir = self.db_path.parent
-        
+        self.archiver = MessageArchiver(
+            db_path=str(self.db_path),
+            archive_dir=str(self.db_dir / 'archives'),
+            days_threshold=30
+        )
+    
     def _get_connection(self) -> sqlite3.Connection:
         """Get a database connection with proper configuration."""
         conn = sqlite3.connect(self.db_path)
@@ -66,26 +75,40 @@ class SQLiteStorage(StorageBackend):
         except Exception:
             return False
     
-    def get_messages(self, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+    def get_messages(self, limit: Optional[int] = None, include_archives: bool = False) -> List[Dict[str, Any]]:
         """Retrieve messages from the SQLite database.
         
         Args:
             limit: Optional maximum number of messages to retrieve
-        
+            include_archives: Whether to include archived messages in the response
+            
         Returns:
             List of message dictionaries
         """
         try:
+            messages = []
             with self._get_connection() as conn:
                 query = "SELECT * FROM messages ORDER BY timestamp DESC"
                 if limit is not None:
                     query += f" LIMIT {limit}"
                     
                 cursor = conn.execute(query)
-                return [dict(row) for row in cursor.fetchall()]
-        except Exception:
+                messages = [dict(row) for row in cursor.fetchall()]
+                
+            if include_archives:
+                archives = self.archiver.get_archive_list()
+                for archive in archives:
+                    archived_messages = self.archiver.get_messages_from_archive(archive['path'])
+                    messages.extend(archived_messages)
+                messages.sort(key=lambda x: x['timestamp'], reverse=True)
+                if limit is not None:
+                    messages = messages[:limit]
+                    
+            return messages
+        except Exception as e:
+            logger.error(f"Error retrieving messages: {e}")
             return []
-    
+            
     def get_message_by_id(self, message_id: str) -> Optional[Dict[str, Any]]:
         """Retrieve a specific message by ID.
         
@@ -105,3 +128,14 @@ class SQLiteStorage(StorageBackend):
                 return dict(row) if row else None
         except Exception:
             return None
+
+    def archive_old_messages(self, reference_time: datetime) -> Optional[str]:
+        """Archive messages older than the threshold.
+        
+        Args:
+            reference_time: Current time to calculate threshold from
+            
+        Returns:
+            Path to created archive if messages were archived, None otherwise
+        """
+        return self.archiver.archive_messages(reference_time)

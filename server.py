@@ -14,6 +14,10 @@ from http import HTTPStatus
 from dotenv import load_dotenv
 from storage.factory import create_storage
 from pathlib import Path
+import threading
+import time
+import subprocess
+from jinja2 import Environment, FileSystemLoader
 
 # Configure logging with a more detailed format and multiple levels
 log_format = '%(asctime)s - %(name)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s'
@@ -98,6 +102,8 @@ class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
                 keys_dir='keys',
                 public_keys_dir='identity/public_keys'
             )
+        # Set up Jinja2 environment
+        self.jinja_env = Environment(loader=FileSystemLoader('templates'))
         # Set the directory for serving static files
         logger.debug("Initializing ChatRequestHandler")
         super().__init__(*args, directory="static", **kwargs)
@@ -106,52 +112,72 @@ class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
         """Handle errors and return appropriate response"""
         error_msg = f"Error occurred: {str(error)}"
         logger.error(error_msg, exc_info=True)  # Include full stack trace
-        error_response = {
-            'error': str(error),
-            'traceback': traceback.format_exc()
-        }
-        self.send_response(HTTPStatus.INTERNAL_SERVER_ERROR)
-        self.send_header('Content-Type', 'application/json')
-        self.end_headers()
-        self.wfile.write(json.dumps(error_response).encode('utf-8'))
+        
+        # Don't try to send error response for broken pipe errors
+        if isinstance(error, BrokenPipeError):
+            logger.info("Client disconnected prematurely - suppressing broken pipe error")
+            return
+            
+        try:
+            error_response = {
+                'error': str(error),
+                'traceback': traceback.format_exc()
+            }
+            self.send_response(HTTPStatus.INTERNAL_SERVER_ERROR)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps(error_response).encode('utf-8'))
+        except (BrokenPipeError, ConnectionResetError) as e:
+            logger.info(f"Failed to send error response due to connection issue: {e}")
 
     def do_GET(self):
         """Handle GET requests"""
         try:
-            parsed_url = urlparse(self.path)
-            path = parsed_url.path
+            parsed_path = urlparse(self.path)
+            path = parsed_path.path
             
             client_address = self.client_address[0]
             logger.info(f"GET request from {client_address} to {path}")
             
-            if path == '/':
-                logger.debug("Serving main page")
-                self.serve_file('templates/index.html', 'text/html')
-            elif path == '/messages':
-                logger.debug("Handling messages request")
-                self.serve_messages()
-            elif path == '/verify_username':
-                logger.debug("Handling username verification")
-                self.verify_username()
-            elif path.startswith('/messages/'):
-                # Serve individual message files
-                filename = path.split('/')[-1]
-                message_path = Path('messages') / filename
-                if message_path.exists() and message_path.is_file():
-                    self.send_response(HTTPStatus.OK)
-                    self.send_header('Content-Type', 'text/plain')
-                    self.end_headers()
-                    self.wfile.write(message_path.read_bytes())
-                else:
-                    self.send_error(HTTPStatus.NOT_FOUND, "Message file not found")
-            elif path.startswith('/static/'):
-                # Handle static files directly
-                try:
-                    # Remove the leading '/static/' to get the relative path
-                    file_path = path[8:]  # len('/static/') == 8
-                    logger.debug(f"Serving static file: {file_path}")
-                    with open(os.path.join('static', file_path), 'rb') as f:
-                        content = f.read()
+            # Wrap the entire response handling in a try-except block
+            try:
+                if path == '/':
+                    logger.debug("Serving main page")
+                    self.serve_file('templates/index.html', 'text/html')
+                elif path == '/messages':
+                    logger.debug("Handling messages request")
+                    self.serve_messages()
+                elif path == '/verify_username':
+                    logger.debug("Handling username verification")
+                    self.verify_username()
+                elif path == '/status':
+                    self.serve_status_page()
+                elif path.startswith('/public_key/'):
+                    key_name = path.split('/')[-1]
+                    key_path = Path('identity/public_keys') / key_name
+                    if key_path.exists() and key_path.suffix == '.pub':
+                        self.serve_file(key_path, 'text/plain')
+                    else:
+                        self.send_error(HTTPStatus.NOT_FOUND)
+                elif path.startswith('/messages/'):
+                    # Serve individual message files
+                    filename = path.split('/')[-1]
+                    message_path = Path('messages') / filename
+                    if message_path.exists() and message_path.is_file():
+                        self.send_response(HTTPStatus.OK)
+                        self.send_header('Content-Type', 'text/plain')
+                        self.end_headers()
+                        self.wfile.write(message_path.read_bytes())
+                    else:
+                        self.send_error(HTTPStatus.NOT_FOUND, "Message file not found")
+                elif path.startswith('/static/'):
+                    # Handle static files directly
+                    try:
+                        # Remove the leading '/static/' to get the relative path
+                        file_path = path[8:]  # len('/static/') == 8
+                        logger.debug(f"Serving static file: {file_path}")
+                        with open(os.path.join('static', file_path), 'rb') as f:
+                            content = f.read()
                         self.send_response(HTTPStatus.OK)
                         content_type = 'text/css' if file_path.endswith('.css') else 'application/javascript'
                         self.send_header('Content-Type', content_type)
@@ -159,26 +185,34 @@ class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
                         self.end_headers()
                         self.wfile.write(content)
                         logger.debug(f"Successfully served static file: {file_path}")
-                except FileNotFoundError:
-                    logger.error(f"Static file not found: {file_path}")
-                    self.send_error(HTTPStatus.NOT_FOUND)
-            elif path.startswith('/identity/public_keys/'):
-                # Serve public key files
-                username = path.split('/')[-1].split('.')[0]
-                public_key_path = os.path.join(REPO_PATH, 'identity/public_keys', f'{username}.pub')
-                if os.path.exists(public_key_path):
-                    self.send_response(HTTPStatus.OK)
-                    self.send_header('Content-Type', 'text/plain')
-                    self.end_headers()
-                    with open(public_key_path, 'r') as f:
-                        self.wfile.write(f.read().encode('utf-8'))
+                    except FileNotFoundError:
+                        logger.error(f"Static file not found: {file_path}")
+                        self.send_error(HTTPStatus.NOT_FOUND)
+                    except Exception as e:
+                        logger.error(f"Error serving file {file_path}: {e}")
+                        self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR)
+                elif path.startswith('/identity/public_keys/'):
+                    # Serve public key files
+                    username = path.split('/')[-1].split('.')[0]
+                    public_key_path = os.path.join(REPO_PATH, 'identity/public_keys', f'{username}.pub')
+                    if os.path.exists(public_key_path):
+                        self.send_response(HTTPStatus.OK)
+                        self.send_header('Content-Type', 'text/plain')
+                        self.end_headers()
+                        with open(public_key_path, 'r') as f:
+                            self.wfile.write(f.read().encode('utf-8'))
+                    else:
+                        self.send_error(HTTPStatus.NOT_FOUND, "Public key not found")
                 else:
-                    self.send_error(HTTPStatus.NOT_FOUND, "Public key not found")
-            else:
-                logger.info(f"Attempting to serve unknown path: {path}")
-                super().do_GET()
+                    logger.info(f"Attempting to serve unknown path: {path}")
+                    super().do_GET()
+            except (BrokenPipeError, ConnectionResetError) as e:
+                logger.info(f"Client disconnected during response: {e}")
+            except Exception as e:
+                logger.error(f"Error in GET request handler", exc_info=True)
+                self.handle_error(e)
         except Exception as e:
-            logger.error(f"Error in GET request handler", exc_info=True)
+            logger.error(f"Error parsing request", exc_info=True)
             self.handle_error(e)
 
     def do_POST(self):
@@ -425,7 +459,60 @@ class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
             }).encode('utf-8'))
         except Exception as e:
             logger.error(f"Error verifying username: {e}")
-            self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR, str(e))
+            self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR)
+
+    def get_system_status(self):
+        """Get current system status information."""
+        try:
+            # Check git status
+            subprocess.run(['git', 'status'], check=True, capture_output=True)
+            git_status = True
+        except subprocess.CalledProcessError:
+            git_status = False
+
+        try:
+            # Check if we can create and verify a test signature
+            test_message = b"test"
+            signature = storage.key_manager.sign_message(test_message.decode())
+            signature_status = True
+        except Exception:
+            signature_status = False
+
+        try:
+            # Get latest commit
+            result = subprocess.run(['git', 'rev-parse', 'HEAD'], 
+                                 check=True, capture_output=True, text=True)
+            latest_commit = result.stdout.strip()
+        except subprocess.CalledProcessError:
+            latest_commit = "Unknown"
+
+        # Get list of public keys
+        public_keys_dir = Path('identity/public_keys')
+        public_keys = [f.name for f in public_keys_dir.glob('*.pub')] if public_keys_dir.exists() else []
+
+        return {
+            'git_status': git_status,
+            'signature_status': signature_status,
+            'latest_commit': latest_commit,
+            'public_keys': public_keys,
+            'current_time': '2025-01-13T09:51:18-05:00',  # Using provided timestamp
+            'repo_name': os.environ.get('GITHUB_REPO', '')
+        }
+
+    def serve_status_page(self):
+        """Serve the system status page."""
+        try:
+            template = self.jinja_env.get_template('status.html')
+            status_data = self.get_system_status()
+            content = template.render(**status_data)
+            
+            self.send_response(HTTPStatus.OK)
+            self.send_header('Content-Type', 'text/html')
+            self.end_headers()
+            self.wfile.write(content.encode())
+        except Exception as e:
+            logger.error(f"Error serving status page: {str(e)}")
+            self.handle_error(e)
 
 def find_available_port(start_port=8000, max_attempts=100):
     """Find an available port starting from start_port"""
@@ -461,25 +548,45 @@ def open_browser(port):
         logger.error(f"Failed to open browser: {e}")
 
 def main():
-    """Start the server"""
+    """Start the server."""
     try:
+        # Perform initial archiving using current time
+        current_time = datetime.fromisoformat('2025-01-13T09:58:54-05:00')  # Use provided time
+        archive_path = storage.archive_old_messages(current_time)
+        if archive_path:
+            logger.info(f"Created archive during startup: {archive_path}")
+            metrics = storage.archiver.get_metrics()
+            logger.info(
+                f"Archive metrics: {metrics['total_archives_created']} archives, "
+                f"{metrics['total_messages_archived']} messages, "
+                f"{metrics['total_mb_archived']:.2f}MB"
+            )
+
+        # Find available port
         port = find_available_port()
-        logger.info(f"Found available port: {port}")
+        if not port:
+            logger.error("Could not find an available port")
+            return
+
+        # Create and configure the HTTP server
+        handler = ChatRequestHandler
+        httpd = socketserver.ThreadingTCPServer(("", port), handler)
         
-        # Create and start the server
-        with socketserver.TCPServer(("", port), ChatRequestHandler) as httpd:
-            logger.info(f"Server running on port {port}...")
-            
-            # Open the browser
-            open_browser(port)
-            
-            # Start serving
-            httpd.serve_forever()
+        logger.info(f"Starting server on port {port}")
+        print(f"Server started at http://localhost:{port}")
+        
+        # Open browser in a separate thread
+        if not os.environ.get('NO_BROWSER'):
+            threading.Thread(target=open_browser, args=(port,), daemon=True).start()
+        
+        # Start server
+        httpd.serve_forever()
+        
     except KeyboardInterrupt:
-        logger.info("\nShutting down server...")
+        logger.info("Server stopped by user")
+        httpd.server_close()
     except Exception as e:
-        logger.error(f"Error starting server: {e}")
-        raise
+        logger.error(f"Server error: {e}", exc_info=True)
 
 if __name__ == "__main__":
     main()
