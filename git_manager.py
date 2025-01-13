@@ -58,7 +58,7 @@ class KeyManager:
             )
             return result.returncode == 0
         except (ValueError, subprocess.CalledProcessError) as e:
-            print(f"Signature verification failed: {e}")
+            logger.error(f"Signature verification failed: {e}")
             return False
         finally:
             # Clean up temp files
@@ -129,8 +129,12 @@ class GitManager:
         self.last_pull_time = 0
         self.pull_cooldown = 5  # Minimum seconds between pulls
         
+        # Initialize cloned repos directory
+        self.cloned_repos_dir = self.repo_path / 'cloned_repos'
+        self.cloned_repos_dir.mkdir(parents=True, exist_ok=True)
+        
         if self.use_github:
-            print("GitHub synchronization enabled")
+            logger.info("GitHub synchronization enabled")
             # Initialize GitHub API client
             self.g = Github(self.github_token)
             self.repo = self.g.get_repo(self.repo_name)
@@ -139,7 +143,7 @@ class GitManager:
             if not (self.repo_path / '.git').exists():
                 self.init_git_repo()
         else:
-            print("GitHub synchronization disabled")
+            logger.info("GitHub synchronization disabled")
         
         # Set up messages directory path
         self.messages_dir = self.repo_path / 'messages'
@@ -154,46 +158,53 @@ class GitManager:
         if self.use_github:
             self.sync_changes_to_github(public_keys_dir / 'anonymous.pub', "System")
 
+    def _run_git_command(self, command, cwd=None):
+        """Run a git command with suppressed output unless there's an error."""
+        try:
+            result = subprocess.run(
+                command,
+                cwd=cwd or str(self.repo_path),
+                check=True,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            # Log any stderr output at debug level
+            if result.stderr:
+                logger.debug(f"Git command stderr: {result.stderr}")
+            return result
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Git command failed: {' '.join(command)}")
+            logger.debug(f"Command output: {e.output if hasattr(e, 'output') else ''}")
+            logger.debug(f"Command stderr: {e.stderr if hasattr(e, 'stderr') else ''}")
+            raise
+
     def init_git_repo(self):
         """Initialize git repository and set up remote."""
-        if not self.use_github:
-            return
-
-        # Initialize git repository
-        subprocess.run(['git', 'init'], cwd=str(self.repo_path), check=True)
-        
-        # Configure git
-        subprocess.run(['git', 'config', 'user.name', 'BookChat Bot'], cwd=str(self.repo_path), check=True)
-        subprocess.run(['git', 'config', 'user.email', 'bot@bookchat.local'], cwd=str(self.repo_path), check=True)
-        
-        # Add GitHub remote
-        remote_url = f'https://{self.github_token}@github.com/{self.repo_name}.git'
-        subprocess.run(['git', 'remote', 'add', 'origin', remote_url], cwd=str(self.repo_path), check=True)
-        
-        # Pull existing content
-        try:
-            subprocess.run(['git', 'pull', 'origin', 'main'], cwd=str(self.repo_path), check=True)
-        except subprocess.CalledProcessError:
-            # If pull fails, create and push initial commit
-            subprocess.run(['git', 'checkout', '-b', 'main'], cwd=str(self.repo_path), check=True)
+        if not (self.repo_path / '.git').exists():
+            self._run_git_command(['git', 'init'])
+            self._run_git_command(['git', 'remote', 'add', 'origin', f'https://github.com/{self.repo_name}.git'])
+        self._run_git_command(['git', 'fetch', 'origin'])
+        self._run_git_command(['git', 'checkout', '-B', 'main', 'origin/main'])
 
     def sync_changes_to_github(self, filepath, author="BookChat Bot"):
         """Sync changes to GitHub."""
         if not self.use_github:
+            logger.debug("GitHub sync disabled, skipping")
             return
-
+        
         try:
             # Ensure filepath is a Path object
             filepath = Path(filepath) if not isinstance(filepath, Path) else filepath
             
             # Check if the file exists before trying to sync
             if not filepath.exists():
-                print(f"Warning: File {filepath} does not exist, skipping GitHub sync")
+                logger.warning(f"Warning: File {filepath} does not exist, skipping GitHub sync")
                 return
             
             # Stage the file
             relative_path = filepath.relative_to(self.repo_path)
-            subprocess.run(['git', 'add', str(relative_path)], cwd=str(self.repo_path), check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            self._run_git_command(['git', 'add', str(relative_path)])
             
             # Check if there are any changes to commit
             status = subprocess.run(
@@ -205,30 +216,45 @@ class GitManager:
             )
             
             if not status.stdout.strip():
-                print(f"No changes to commit for {relative_path}")
+                logger.debug(f"No changes to commit for {relative_path}")
                 return
             
             # Commit the change
             commit_message = f'Update user key for {author}'
-            subprocess.run(
-                ['git', 'commit', '--no-verify', '-m', commit_message],
-                cwd=str(self.repo_path),
-                check=True,
-                env={**os.environ, 'GIT_AUTHOR_NAME': author, 'GIT_AUTHOR_EMAIL': f'{author}@bookchat.local'},
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
-            )
+            self._run_git_command(['git', 'commit', '-m', commit_message])
             
             # Push to GitHub
-            subprocess.run(['git', 'push', 'origin', 'main'], cwd=str(self.repo_path), check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            print(f"Successfully synced {relative_path} to GitHub")
+            self._run_git_command(['git', 'push', 'origin', 'main'])
+            logger.info(f"Successfully synced {relative_path} to GitHub")
             
         except subprocess.CalledProcessError as e:
-            print(f"Failed to sync to GitHub: {e}")
+            logger.error(f"Error syncing to GitHub: {e}")
             # Continue without GitHub sync - don't raise the error
 
+    def sync_forks(self):
+        """Sync with all forks listed in forks_list.txt."""
+        from sync_forks import clone_or_update_repo
+        
+        forks_file = self.repo_path / "forks_list.txt"
+        if not forks_file.exists():
+            logger.warning("forks_list.txt not found, skipping fork sync")
+            return
+        
+        with open(forks_file, "r") as f:
+            repos = [line.strip() for line in f if line.strip()]
+    
+        # Filter out current repo if it exists
+        if self.repo_name:
+            repos = [repo for repo in repos if self.repo_name not in repo]
+    
+        for repo in repos:
+            try:
+                clone_or_update_repo(repo, "messages")
+            except Exception as e:
+                logger.error(f"Error syncing fork {repo}: {e}")
+
     def pull_from_github(self):
-        """Pull latest changes from GitHub."""
+        """Pull latest changes from GitHub and sync forks."""
         if not self.use_github:
             return False
 
@@ -238,14 +264,11 @@ class GitManager:
             return False
 
         try:
-            # Fetch latest changes
-            subprocess.run(
-                ['git', 'fetch', 'origin', 'main'],
-                cwd=str(self.repo_path),
-                check=True,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
-            )
+            # First sync with all forks
+            self.sync_forks()
+            
+            # Then pull from main repo
+            self._run_git_command(['git', 'fetch', 'origin', 'main'])
             
             # Check if we're behind origin/main
             status = subprocess.run(
@@ -256,24 +279,19 @@ class GitManager:
                 check=True
             )
             
-            if int(status.stdout.strip()) > 0:
-                # We're behind, pull changes
-                subprocess.run(
-                    ['git', 'pull', 'origin', 'main'],
-                    cwd=str(self.repo_path),
-                    check=True,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL
-                )
+            if status.stdout.strip() != '0':
+                self._run_git_command(['git', 'pull', '--rebase', 'origin', 'main'])
+                
+                # Update last pull time
                 self.last_pull_time = current_time
                 return True
                 
-            self.last_pull_time = current_time
             return False
+        
         except subprocess.CalledProcessError as e:
-            logger.error(f"Failed to pull from GitHub: {e}")
+            logger.error(f"Error pulling from GitHub: {e}")
             return False
-            
+
     def ensure_repo_exists(self):
         """Ensure the repository exists locally, clone if it doesn't."""
         if self.use_github:
@@ -331,94 +349,131 @@ class GitManager:
         return metadata, message
 
     def read_message(self, filename, skip_pull=False):
-        """Read a message from a file."""
-        if self.use_github and not skip_pull:
+        """Read a message from a file, checking both main repo and forks."""
+        if not skip_pull:
             self.pull_from_github()
             
-        filepath = self.messages_dir / filename
-        if not filepath.exists():
-            return None
-            
-        content = filepath.read_text()
+        # Convert filename to Path object if it's a string
+        filename = Path(filename)
         
-        # Skip .gitkeep and non-text files
-        if filename == '.gitkeep' or not content.strip():
-            return None
-        
-        # First try to parse as JSON for backward compatibility
-        try:
-            json_data = json.loads(content)
-            if isinstance(json_data, dict):
-                # Convert old JSON format to new format
+        def process_message(content):
+            """Helper function to process message content into the expected format"""
+            if not content:
+                return None
+                
+            # Skip .gitkeep and non-text files
+            if filename.name == '.gitkeep' or not content.strip():
+                return None
+                
+            # First try to parse as JSON for backward compatibility
+            try:
+                json_data = json.loads(content)
+                if isinstance(json_data, dict):
+                    # Convert old JSON format to new format
+                    return {
+                        'id': str(filename),
+                        'content': json_data.get('content', ''),
+                        'author': json_data.get('author', 'anonymous'),
+                        'createdAt': json_data.get('timestamp'),
+                        'parent_id': json_data.get('parent_id'),
+                        'signed': 'signature' in json_data,
+                        'verified': str(json_data.get('verified', False)).lower(),
+                        'type': json_data.get('type', 'message')
+                    }
+            except json.JSONDecodeError:
+                # Not JSON, parse as plaintext with footers
+                metadata, message = self.parse_message(content)
+                
+                # Try to get date in this order:
+                # 1. From metadata Date header
+                # 2. From filename (YYYYMMDD_HHMMSS)
+                # 3. From git commit timestamp
+                # 4. Mark as "No timestamp"
+                date = metadata.get('Date')
+                if date:
+                    try:
+                        # Try to parse as ISO format first
+                        parsed_date = datetime.fromisoformat(date.replace('Z', '+00:00'))
+                        # Format as RFC 3339 with proper timezone offset
+                        date_str = parsed_date.astimezone().strftime('%Y-%m-%dT%H:%M:%S%z')
+                        date = date_str[:-2] + ':' + date_str[-2:]  # Insert colon in timezone offset
+                    except ValueError:
+                        date = None
+                
+                if not date:
+                    try:
+                        # Try to parse from filename (YYYYMMDD_HHMMSS)
+                        fname = filename.stem  # Get filename without extension
+                        parts = fname.split('_')
+                        if len(parts) >= 2:
+                            date = f"{parts[0][:4]}-{parts[0][4:6]}-{parts[0][6:]}T{parts[1][:2]}:{parts[1][2:4]}:{parts[1][4:]}Z"
+                    except:
+                        date = None
+                
+                if not date:
+                    try:
+                        # Try to get commit timestamp
+                        rel_path = filename.relative_to(self.repo_path)
+                        date = self.get_commit_timestamp(str(rel_path))
+                    except ValueError:
+                        # If relative_to fails, the file might be in a different path
+                        date = None
+                
+                if not date:
+                    date = "No timestamp"
+                
+                # Try to get author from metadata or filename
+                author = metadata.get('Author', 'anonymous')
+                if author == 'anonymous' and '_' in str(filename):
+                    try:
+                        # Try to get author from filename (YYYYMMDD_HHMMSS_author.txt)
+                        author = filename.stem.split('_')[2]
+                    except:
+                        pass
+                
+                # Verify signature if present
+                verified = self.verify_message(message, metadata)
+                metadata['verified'] = str(verified if verified is not None else False).lower()
+                
                 return {
-                    'id': filename,
-                    'content': json_data.get('content', ''),
-                    'author': json_data.get('author', 'anonymous'),
-                    'createdAt': json_data.get('timestamp'),  
-                    'parent_id': json_data.get('parent_id'),
-                    'signed': 'signature' in json_data,
-                    'verified': str(json_data.get('verified', False)).lower(),
-                    'type': json_data.get('type', 'message')
+                    'id': str(filename),
+                    'content': message,
+                    'author': author,
+                    'createdAt': date,
+                    'parent_id': metadata.get('Parent-Message'),
+                    'signed': 'Signature' in metadata,
+                    'verified': metadata['verified'],
+                    'type': metadata.get('Type', 'message')
                 }
-        except json.JSONDecodeError:
-            # Not JSON, parse as plaintext with footers
-            metadata, message = self.parse_message(content)
-            
-            # Try to get date in this order:
-            # 1. From metadata Date header
-            # 2. From filename (YYYYMMDD_HHMMSS)
-            # 3. From git commit timestamp
-            # 4. Mark as "No timestamp"
-            date = metadata.get('Date')
-            if date:
-                try:
-                    # Try to parse as ISO format first
-                    parsed_date = datetime.fromisoformat(date.replace('Z', '+00:00'))
-                    # Format as RFC 3339 with proper timezone offset
-                    date_str = parsed_date.astimezone().strftime('%Y-%m-%dT%H:%M:%S%z')
-                    date = date_str[:-2] + ':' + date_str[-2:]  # Insert colon in timezone offset
-                except ValueError:
-                    date = None
-            
-            if not date:
-                try:
-                    # Try to parse from filename (YYYYMMDD_HHMMSS)
-                    parts = filename.split('_')
-                    if len(parts) >= 2:
-                        date = f"{parts[0][:4]}-{parts[0][4:6]}-{parts[0][6:]}T{parts[1][:2]}:{parts[1][2:4]}:{parts[1][4:]}Z"
-                except:
-                    date = None
-            
-            if not date:
-                # Try to get commit timestamp
-                date = self.get_commit_timestamp(str(filepath.relative_to(self.repo_path)))
-            
-            if not date:
-                date = "No timestamp"
-            
-            # Try to get author from metadata or filename
-            author = metadata.get('Author', 'anonymous')
-            if author == 'anonymous' and '_' in filename:
-                try:
-                    # Try to get author from filename (YYYYMMDD_HHMMSS_author.txt)
-                    author = filename.split('_')[2].rsplit('.', 1)[0]
-                except:
-                    pass
-            
-            # Verify signature if present
-            verified = self.verify_message(message, metadata)
-            metadata['verified'] = str(verified if verified is not None else False).lower()
-            
-            return {
-                'id': filename,
-                'content': message,
-                'author': author,
-                'createdAt': date,
-                'parent_id': metadata.get('Parent-Message'),
-                'signed': 'Signature' in metadata,
-                'verified': metadata['verified'],
-                'type': metadata.get('Type', 'message')
-            }
+        
+        # First try to read from main repo
+        main_file = self.messages_dir / filename.name
+        if main_file.exists():
+            try:
+                with open(main_file, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                    result = process_message(content)
+                    if result:
+                        return result
+            except Exception as e:
+                logger.debug(f"Error reading message from main repo: {e}")
+        
+        # Then check cloned repos
+        if self.cloned_repos_dir.exists():
+            for repo_dir in self.cloned_repos_dir.iterdir():
+                if repo_dir.is_dir():
+                    fork_file = repo_dir / 'messages' / filename.name
+                    if fork_file.exists():
+                        try:
+                            with open(fork_file, 'r', encoding='utf-8') as f:
+                                content = f.read()
+                                result = process_message(content)
+                                if result:
+                                    return result
+                        except Exception as e:
+                            logger.debug(f"Error reading message from fork {repo_dir.name}: {e}")
+        
+        return None
 
     def verify_message(self, content, metadata):
         """Verify message signature if present."""
@@ -536,35 +591,10 @@ class GitManager:
         return filename
 
     def add_and_commit_file(self, filepath: str, commit_msg: str, author: str = "BookChat Bot"):
-        """Add and commit a specific file.
-        
-        Args:
-            filepath: Path to the file to commit
-            commit_msg: Commit message
-            author: Author of the commit
-        """
-        try:
-            # Check if file has any changes
-            status = subprocess.run(
-                ['git', 'status', '--porcelain', filepath],
-                cwd=self.repo_path,
-                capture_output=True,
-                text=True,
-                check=True
-            ).stdout.strip()
-            
-            # Only proceed if there are changes (status will be empty if no changes)
-            if status:
-                subprocess.run(['git', 'add', filepath], cwd=self.repo_path, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                subprocess.run(['git', 'commit', '-m', commit_msg, f'--author={author}'], cwd=self.repo_path, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                return True
-            else:
-                print(f"No changes to commit for {filepath}")
-                return False
-                
-        except subprocess.CalledProcessError as e:
-            print(f"Error in git operations: {e}")
-            return False
+        """Add and commit a specific file."""
+        self._run_git_command(['git', 'add', filepath])
+        self._run_git_command(['git', 'commit', '-m', commit_msg, f'--author={author} <{author}@bookchat.local>'])
+        return True
 
     def push(self):
         """Push changes to remote repository."""
@@ -585,18 +615,10 @@ class GitManager:
             if 'ahead' not in status.stdout:
                 return True
                 
-            subprocess.run(
-                ['git', 'push', 'origin', 'main'],
-                cwd=str(self.repo_path),
-                check=True,
-                capture_output=True,
-                text=True,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
-            )
+            self._run_git_command(['git', 'push', 'origin', 'main'])
             return True
         except subprocess.CalledProcessError as e:
-            print(f"Error pushing to remote: {e.stderr}")
+            logger.error(f"Error pushing to remote: {e.stderr}")
             return False
 
     def get_commit_timestamp(self, filepath):
@@ -614,7 +636,7 @@ class GitManager:
             if timestamp:
                 return timestamp
         except subprocess.CalledProcessError as e:
-            print(f"Failed to get commit timestamp: {e}")
+            logger.error(f"Failed to get commit timestamp: {e}")
         return None
 
 def main():
@@ -632,8 +654,8 @@ def main():
         filename = manager.save_message("Test message", "test_user")
         
         # Print results
-        print("Message saved successfully!")
-        print(f"Filename: {filename}")
+        logger.info("Message saved successfully!")
+        logger.info(f"Filename: {filename}")
         
     except Exception as e:
-        print(f"Error: {e}")
+        logger.error(f"Error: {e}")

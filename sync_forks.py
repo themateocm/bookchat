@@ -2,6 +2,24 @@ import os
 import subprocess
 from pathlib import Path
 from dotenv import load_dotenv
+import logging
+
+# Set up logging
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+# create file handler which logs even debug messages
+fh = logging.FileHandler('sync_forks.log')
+fh.setLevel(logging.DEBUG)
+# create console handler with a higher log level
+ch = logging.StreamHandler()
+ch.setLevel(logging.ERROR)
+# create formatter and add it to the handlers
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+fh.setFormatter(formatter)
+ch.setFormatter(formatter)
+# add the handlers to the logger
+logger.addHandler(fh)
+logger.addHandler(ch)
 
 # Load the current repository from .env
 load_dotenv()
@@ -17,9 +35,19 @@ base_dir.mkdir(exist_ok=True)
 def run_command(command, cwd=None):
     """Run a shell command and handle errors."""
     try:
-        subprocess.run(command, cwd=cwd, check=True, text=True)
+        result = subprocess.run(
+            command,
+            cwd=cwd,
+            check=True,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+        if result.returncode != 0:
+            logger.error(f"Command failed: {' '.join(command)}")
+            logger.error(f"Error output: {result.stderr}")
     except subprocess.CalledProcessError as e:
-        print(f"Error running command: {' '.join(command)}\n{e}")
+        logger.error(f"Error running command: {' '.join(command)}\n{e}")
 
 def get_unique_repo_name(repo_url):
     """Extract username and repo name from GitHub URL to create a unique directory name."""
@@ -36,7 +64,7 @@ def clone_or_update_repo(repo_url, subdir):
     local_path = base_dir / repo_name
 
     if not local_path.exists():
-        print(f"Cloning repository: {repo_url} into {local_path}")
+        logger.info(f"Cloning repository: {repo_url}")
         # First, do a full clone
         run_command(["git", "clone", "--filter=blob:none", "--no-checkout", repo_url, str(local_path)])
         run_command(["git", "config", "core.sparseCheckout", "true"], cwd=local_path)
@@ -51,14 +79,13 @@ def clone_or_update_repo(repo_url, subdir):
         # Checkout the sparse content
         run_command(["git", "checkout"], cwd=local_path)
     else:
-        print(f"Repository already exists, fetching updates: {repo_name}")
+        logger.debug(f"Updating existing repository: {repo_name}")
         run_command(["git", "pull"], cwd=local_path)
-        # Re-checkout to ensure sparse-checkout is respected
         run_command(["git", "checkout"], cwd=local_path)
 
 def main():
     if not Path(forks_file).exists():
-        print(f"Error: {forks_file} not found.")
+        logger.error(f"Error: {forks_file} not found.")
         return
 
     with open(forks_file, "r") as f:
