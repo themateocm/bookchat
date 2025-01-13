@@ -94,7 +94,10 @@ class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
         global storage
         if storage is None:
             storage = GitStorage('.')
-            storage.key_manager = KeyManager('public_keys')  # Use the public_keys directory
+            storage.key_manager = KeyManager(
+                keys_dir='keys',
+                public_keys_dir='identity/public_keys'
+            )
         # Set the directory for serving static files
         logger.debug("Initializing ChatRequestHandler")
         super().__init__(*args, directory="static", **kwargs)
@@ -221,6 +224,7 @@ class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
             
             # Check if user has a key pair
             has_key = storage.key_manager.has_key_pair(author)
+            logger.debug(f"Author {author} has key pair: {has_key}")
             
             # Save the message
             logger.debug("Attempting to save message...")
@@ -231,7 +235,7 @@ class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
                     datetime.now(),
                     sign=has_key  # Only sign if user has a key pair
                 )
-                logger.info(f"Message save {'successful' if success else 'failed'}")
+                logger.info(f"Message save {'successful' if success else 'failed'} with signing={has_key}")
             except Exception as e:
                 logger.error(f"Exception while saving message: {e}\n{traceback.format_exc()}")
                 success = False
