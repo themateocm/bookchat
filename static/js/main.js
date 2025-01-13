@@ -46,8 +46,13 @@ async function loadMessages() {
         }
         
         const data = await response.json();
-        const messages = data.messages;
+        let messages = data.messages;
         messageVerificationEnabled = data.messageVerificationEnabled;
+        
+        // Filter out unverified messages when verification is enabled
+        if (messageVerificationEnabled) {
+            messages = messages.filter(message => message.verified && message.verified.toLowerCase() === 'true');
+        }
         
         const messagesDiv = document.getElementById('messages');
         const messagesContainer = document.getElementById('messages-container');

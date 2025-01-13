@@ -142,6 +142,9 @@ body {
     box-shadow: 0 2px 4px var(--message-shadow);
     transition: transform 0.2s ease, box-shadow 0.2s ease;
     animation: messageAppear 0.3s ease-out;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    word-break: break-all;
 }
 
 .message:hover {
@@ -258,7 +261,9 @@ body {
     cursor: help;
     display: flex;
     align-items: center;
-    gap: 4px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
 }
 
 .message .signature-key {
