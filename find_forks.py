@@ -75,11 +75,21 @@ def find_root_repo(owner, repo):
 def get_all_forks(owner, repo):
     """Get all forks of a repository."""
     forks = []
-    url = f"https://api.github.com/repos/{owner}/{repo}/forks"
-    while url:
-        data = make_request(url)
+    page = 1
+    while True:
+        url = f"https://api.github.com/repos/{owner}/{repo}/forks?page={page}&per_page=100"
+        response = requests.get(url, headers={"Authorization": f"token {GITHUB_TOKEN}"})
+        if response.status_code != 200:
+            print(f"Error: {response.status_code} - {response.text}")
+            sys.exit(1)
+        
+        data = response.json()
+        if not data:  # No more forks to process
+            break
+            
         forks.extend([f["html_url"] for f in data])
-        url = requests.utils.urlparse(data.links.get("next", {}).get("url", "")).geturl()
+        page += 1
+    
     return forks
 
 
@@ -105,8 +115,8 @@ def traverse_fork_tree(root_owner, root_repo):
 
 
 def main():
-    input_url = input("Enter the GitHub repository URL: ").strip()
-    root_owner, root_repo = get_repo_details(input_url)
+    # Use GITHUB_REPO from .env instead of prompting for input
+    root_owner, root_repo = get_repo_details(GITHUB_REPO)
 
     # Find the root repository
     root_owner, root_repo = find_root_repo(root_owner, root_repo)
@@ -118,6 +128,7 @@ def main():
     # Write to output file
     with open(OUTPUT_FILE, "w") as f:
         f.write("\n".join(all_forks))
+        f.write("\n")
 
     print(f"Forks written to {OUTPUT_FILE}")
 
