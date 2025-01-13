@@ -1,5 +1,15 @@
 # BookChat Application Specification
 
+## Quick Start Guide
+
+### Minimal Implementation Requirements
+- Store messages as text files: `YYYYMMDD_HHMMSS_username.txt`
+- Implement basic message format with date, author, type, and content
+- Set up core API endpoints for messages and username verification
+- Implement basic frontend with message display and input
+
+For detailed implementation steps, see the [Core Components](#core-components) section.
+
 ## Overview
 BookChat is a secure, signature-verified chat application that uses Git for message storage and RSA signatures for message verification. Users can send messages and change usernames with cryptographic verification. The application optionally supports GitHub synchronization for message persistence.
 
@@ -9,7 +19,8 @@ BookChat is a secure, signature-verified chat application that uses Git for mess
 - Messages are stored in a Git repository
 - Each message is a separate `.txt` file in `messages/` directory
 - Message filenames follow the format: `YYYYMMDD_HHMMSS_username.txt`
-- Public keys are stored in `public_keys/` directory as `{username}.pub`
+- Public keys are stored in `identity/public_keys/` directory as `{username}.pub`
+- Archived messages are moved to `archive/` directory
 
 ### 2. Message Format
 Messages are stored as text files with the following format:
@@ -17,23 +28,15 @@ Messages are stored as text files with the following format:
 Date: YYYY-MM-DDTHH:mm:ss.SSSSSS
 Author: username
 Parent-Message: YYYYMMDD_HHMMSS_username.txt  # Optional, used for threaded messages
-Signature: base64_encoded_signature
 Type: message|username_change|system|error
 
 message_content
 ```
 
-The message content format depends on the type:
-1. Regular message: Plain text
-2. Username change: JSON object `{"old_username": "old", "new_username": "new"}`
-3. System message: Plain text system notification
-4. Error message: Plain text error description
-
 ### 3. Message Types
 1. **Regular Message** (`Type: message`)
    - Normal chat messages
    - Content is plain text
-   - Must be signed by author
 
 2. **Username Change** (`Type: username_change`)
    - Content is JSON: `{"old_username": "old", "new_username": "new"}`
@@ -82,36 +85,16 @@ The message content format depends on the type:
   }
   ```
 
+#### GET /status
+- Returns server status information
+- Shows active connections and message count
+
+#### GET /public_key/{username}
+- Retrieves public key for a user
+- Returns: Public key in PEM format
+
 ### 5. Security
-
-#### Key Management
-The application uses a dedicated KeyManager class for RSA operations:
-```python
-class KeyManager:
-    def __init__(self, keys_dir)  # Initialize key manager and generate keys if needed
-    def sign_message(self, message)  # Sign message with private key
-    def verify_signature(self, message, signature_hex, public_key_pem)  # Verify message signature
-    def export_public_key(self, path)  # Export public key to specified path
-```
-
-#### RSA Key Pair
-- Each user has an RSA key pair
-- Private key stored locally as `keys/local.pem`
-- Public key stored in repo as `public_keys/{username}.pub`
-- Key format: PEM
-- Key size: 2048 bits
-- Keys are generated using OpenSSL
-
-#### Message Signing
-1. Create signature:
-   - Sign message JSON (excluding signature field)
-   - Use SHA256 for hashing
-   - Base64 encode the signature
-
-2. Verify signature:
-   - Load author's public key
-   - Verify signature against message JSON
-   - Set verified=true if valid
+For detailed security implementation, including key management and message signing, please refer to [SIGNATURE_SPEC.md](SIGNATURE_SPEC.md).
 
 ### 6. Username Management
 
@@ -133,11 +116,6 @@ class KeyManager:
    - UI display
    - Current session state
 
-#### Username Verification
-1. Server checks message history for username changes
-2. Verifies public key exists
-3. Returns verified username or 'anonymous'
-
 ### 7. GitHub Integration
 
 The application optionally supports GitHub synchronization for message persistence:
@@ -150,7 +128,7 @@ GITHUB_REPO=username/repo
 SYNC_TO_GITHUB=true|false
 ```
 
-#### GitManager GitHub Features
+#### GitManager Features
 ```python
 class GitManager:
     def __init__(self, repo_path)  # Initialize with GitHub credentials
@@ -159,22 +137,40 @@ class GitManager:
     def sync_changes_to_github(self, filepath, author)  # Push changes to GitHub
 ```
 
-#### Synchronization Process
-1. On startup:
-   - Check if GitHub sync is enabled
-   - Clone repository if it doesn't exist
-   - Initialize Git repository if needed
+### 8. Logging System
 
-2. On message save:
-   - Save message locally
-   - If GitHub sync enabled:
-     - Commit changes
-     - Push to remote repository
+The application uses a hierarchical logging system:
 
-3. On public key changes:
-   - Save key locally
-   - If GitHub sync enabled:
-     - Commit and push changes
+#### Log Levels
+- DEBUG: Detailed information for debugging
+- INFO: General operational information
+- WARNING: Warning messages
+- ERROR: Error messages that don't stop the application
+- CRITICAL: Critical errors that may stop the application
+
+#### Log Files
+- `logs/debug.log`: All messages (DEBUG and above)
+- `logs/info.log`: INFO and above
+- `logs/error.log`: ERROR and above
+
+#### Configuration
+- Console logging level controlled by `BOOKCHAT_DEBUG` environment variable
+- Log format includes timestamp, level, filename, and line number
+
+### 9. Message Archiving
+
+The application includes an automatic message archiving system:
+
+#### Archive Settings
+- `ARCHIVE_INTERVAL_SECONDS`: How often to check for messages to archive
+- `ARCHIVE_DAYS_THRESHOLD`: Age threshold for archiving messages
+- `ARCHIVE_MAX_SIZE_MB`: Maximum size before forcing archive
+
+#### Archive Process
+1. Messages older than threshold are moved to archive
+2. Archive is created when size limit is reached
+3. Archived messages maintain their original format
+4. Archives are included in GitHub sync if enabled
 
 ## Client-Side Implementation
 
@@ -252,10 +248,17 @@ bookchat/
 ├── messages/             # Message storage (.txt files)
 │   ├── YYYYMMDD_HHMMSS_username.txt  # Message files
 │   └── .gitkeep
-├── public_keys/          # User public keys
-│   └── username.pub      # RSA public keys
-└── keys/                 # Local private key
-    └── local.pem         # RSA private key
+├── identity/
+│   └── public_keys/      # User public keys
+│       └── username.pub  # RSA public keys
+├── keys/                 # Local private key
+│   └── local.pem         # RSA private key
+├── archive/              # Archived messages
+│   └── YYYYMMDD_HHMMSS_username.txt  # Archived message files
+└── logs/                 # Log files
+    ├── debug.log
+    ├── info.log
+    └── error.log
 ```
 
 ## Message Examples
@@ -313,3 +316,5 @@ Username change failed: New username already exists
 5. Messages must be properly formatted text files
 6. Parent-Message is optional and used for threading
 7. System messages should use "system" as author
+
+*Last updated: 2025-01-13*
