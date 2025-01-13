@@ -440,6 +440,80 @@ class GitManager:
             
         return filename
 
+    def add_and_commit_file(self, filepath: str, commit_msg: str, author: str = "BookChat Bot"):
+        """Add and commit a specific file.
+        
+        Args:
+            filepath: Path to the file to commit
+            commit_msg: Commit message
+            author: Author of the commit
+        """
+        try:
+            # Check if file has changes to commit
+            status = subprocess.run(
+                ['git', 'status', '--porcelain', filepath],
+                cwd=str(self.repo_path),
+                check=True,
+                capture_output=True,
+                text=True
+            )
+            
+            # If no changes, return early
+            if not status.stdout.strip():
+                return True
+            
+            # Add the specific file
+            subprocess.run(
+                ['git', 'add', filepath],
+                cwd=str(self.repo_path),
+                check=True,
+                capture_output=True,
+                text=True
+            )
+            
+            # Commit the file
+            subprocess.run(
+                ['git', 'commit', '--no-verify', filepath, '-m', commit_msg],
+                cwd=str(self.repo_path),
+                check=True,
+                capture_output=True,
+                text=True,
+                env={**os.environ, 'GIT_AUTHOR_NAME': author, 'GIT_AUTHOR_EMAIL': f'{author}@bookchat.local'}
+            )
+            
+            return True
+        except subprocess.CalledProcessError as e:
+            print(f"Error in git operations: {e.stderr}")
+            return False
+
+    def push(self):
+        """Push changes to remote repository."""
+        try:
+            # Check if there are commits to push
+            status = subprocess.run(
+                ['git', 'status', '-sb'],
+                cwd=str(self.repo_path),
+                check=True,
+                capture_output=True,
+                text=True
+            )
+            
+            # If nothing to push, return early
+            if 'ahead' not in status.stdout:
+                return True
+                
+            subprocess.run(
+                ['git', 'push'],
+                cwd=str(self.repo_path),
+                check=True,
+                capture_output=True,
+                text=True
+            )
+            return True
+        except subprocess.CalledProcessError as e:
+            print(f"Error pushing to remote: {e.stderr}")
+            return False
+
 def main():
     """Main function for testing"""
     try:

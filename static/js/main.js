@@ -100,12 +100,11 @@ function createMessageElement(message) {
     const leftSection = document.createElement('div');
     leftSection.className = 'header-left';
     
-    // Add verification status indicator
-    const verificationStatus = document.createElement('span');
-    verificationStatus.className = 'verification-status';
-    
-    // Only show verification UI if enabled
-    if (messageVerificationEnabled) {
+    // Add verification status indicator (only when not pending)
+    if (!message.pending && messageVerificationEnabled) {
+        const verificationStatus = document.createElement('span');
+        verificationStatus.className = 'verification-status';
+        
         if (message.verified && message.verified.toLowerCase() === 'true') {
             verificationStatus.className += ' verified';
             verificationStatus.title = 'Message verified';
@@ -126,7 +125,7 @@ function createMessageElement(message) {
     const authorSpan = document.createElement('span');
     authorSpan.className = 'author';
     authorSpan.textContent = message.author || 'anonymous';
-    if (messageVerificationEnabled) {
+    if (messageVerificationEnabled && !message.pending) {
         if (message.verified && message.verified.toLowerCase() === 'true') {
             authorSpan.classList.add('verified');
             authorSpan.title = 'Verified message';
@@ -154,16 +153,22 @@ function createMessageElement(message) {
     const rightSection = document.createElement('div');
     rightSection.className = 'header-right';
     
-    // Add timestamp
+    // Add timestamp or pending indicator
     const timestamp = document.createElement('span');
     timestamp.className = 'timestamp';
-    const messageDate = new Date(message.createdAt);
-    timestamp.textContent = messageDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    timestamp.title = messageDate.toLocaleString();
+    if (message.pending) {
+        timestamp.className += ' pending';
+        timestamp.textContent = 'Sending...';
+        timestamp.title = 'Message is being sent';
+    } else {
+        const messageDate = new Date(message.createdAt);
+        timestamp.textContent = messageDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        timestamp.title = messageDate.toLocaleString();
+    }
     rightSection.appendChild(timestamp);
     
-    // Add source file link if available and verification is enabled
-    if (message.file && messageVerificationEnabled) {
+    // Add source file link if available and verification is enabled and not pending
+    if (message.file && messageVerificationEnabled && !message.pending) {
         const sourceLink = document.createElement('a');
         sourceLink.className = 'source-link';
         sourceLink.href = `/messages/${message.file.split('/').pop()}`; // Get just the filename
@@ -174,98 +179,38 @@ function createMessageElement(message) {
     }
     
     messageHeader.appendChild(rightSection);
-    
-    // Add verification details button only if verification is enabled
-    if (messageVerificationEnabled) {
-        const verificationDetails = document.createElement('button');
-        verificationDetails.className = 'verification-details-btn';
-        verificationDetails.textContent = 'View Verification';
-        verificationDetails.onclick = () => {
-            const details = document.createElement('div');
-            details.className = 'verification-details';
-            details.innerHTML = `
-                <h4>Message Verification Details</h4>
-                <p><strong>Status:</strong> ${message.verified === 'true' ? 'Verified' : 'Unverified'}</p>
-                <p><strong>Timestamp:</strong> ${message.timestamp}</p>
-                ${message.signature ? `<p><strong>Signature:</strong> ${message.signature.substring(0, 32)}...</p>` : ''}
-                ${message.previousHash ? `<p><strong>Previous Hash:</strong> ${message.previousHash.substring(0, 32)}...</p>` : ''}
-            `;
-            
-            // Replace existing details or add new ones
-            const existingDetails = messageDiv.querySelector('.verification-details');
-            if (existingDetails) {
-                existingDetails.remove();
-            } else {
-                messageDiv.appendChild(details);
-            }
-        };
-        messageHeader.appendChild(verificationDetails);
-    }
-    
     messageDiv.appendChild(messageHeader);
     
     // Add message content
-    const contentDiv = document.createElement('div');
-    contentDiv.className = 'content';
-    
-    // Handle different message types
-    if (message.type === 'error') {
-        contentDiv.classList.add('error');
-        contentDiv.textContent = message.content;
-    } else if (message.type === 'system') {
-        contentDiv.classList.add('system');
-        contentDiv.textContent = message.content;
-    } else if (message.type === 'username_change') {
-        contentDiv.classList.add('username-change');
-        try {
-            const data = JSON.parse(message.content);
-            contentDiv.innerHTML = `
-                <div class="username-change-icon">&#128100;</div>
-                <div class="username-change-text">
-                    Changed username from <span class="old-username">${data.old_username}</span> 
-                    to <span class="new-username">${data.new_username}</span>
-                </div>
-            `;
-        } catch (e) {
-            contentDiv.textContent = message.content;
-        }
-    } else {
-        contentDiv.textContent = message.content;
-    }
-    
-    messageDiv.appendChild(contentDiv);
-    
-    // Add signature if present
-    if (message.signature) {
-        const signatureDiv = document.createElement('div');
-        signatureDiv.className = 'signature';
-        
-        const signatureIcon = document.createElement('span');
-        signatureIcon.className = 'signature-icon';
-        signatureIcon.textContent = '&#128273;';
-        signatureDiv.appendChild(signatureIcon);
-        
-        const signatureText = document.createElement('div');
-        signatureText.className = 'signature-text';
-        
-        const signedText = document.createElement('span');
-        signedText.className = message.verified ? 'signature-verified' : 'signature-unverified';
-        signedText.textContent = message.verified ? 'Verified' : 'Unverified';
-        signatureText.appendChild(signedText);
-        
-        const signedMessage = document.createElement('span');
-        signedMessage.textContent = 'Signed Message';
-        signatureText.appendChild(signedMessage);
-        
-        signatureDiv.appendChild(signatureText);
-        messageDiv.appendChild(signatureDiv);
-    }
+    const content = document.createElement('div');
+    content.className = 'content';
+    content.textContent = message.content;
+    messageDiv.appendChild(content);
     
     return messageDiv;
 }
 
 async function sendMessage(content, type = 'message') {
     try {
+        // Create a temporary message object
+        const tempMessage = {
+            content: content,
+            author: currentUsername,
+            createdAt: new Date().toISOString(),
+            id: 'pending-' + Date.now(),
+            verified: false,
+            pending: true
+        };
+
+        // Immediately add message to UI
+        const messagesContainer = document.getElementById('messages-container');
+        messagesContainer.appendChild(createMessageElement(tempMessage));
+        
+        // Scroll to bottom
+        const messagesDiv = document.getElementById('messages');
+        messagesDiv.scrollTop = messagesDiv.scrollHeight;
+
+        // Send to server
         const response = await fetch('/messages', {
             method: 'POST',
             headers: {
@@ -280,55 +225,70 @@ async function sendMessage(content, type = 'message') {
         
         const result = await response.json();
         
-        // Reload messages to show the new message
-        await loadMessages();
+        // Update the pending message with the real data
+        const pendingMessage = document.querySelector(`[data-message-id="${tempMessage.id}"]`);
+        if (pendingMessage) {
+            // Update message ID
+            pendingMessage.dataset.messageId = result.id;
+            
+            // Update the timestamp
+            const timestamp = pendingMessage.querySelector('.timestamp');
+            if (timestamp) {
+                const messageDate = new Date(result.createdAt);
+                timestamp.textContent = messageDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                timestamp.title = messageDate.toLocaleString();
+                timestamp.classList.remove('pending');
+            }
+            
+            // Add verification status if needed
+            if (messageVerificationEnabled) {
+                const leftSection = pendingMessage.querySelector('.header-left');
+                const verificationStatus = document.createElement('span');
+                verificationStatus.className = 'verification-status';
+                
+                if (result.verified && result.verified.toLowerCase() === 'true') {
+                    verificationStatus.className += ' verified';
+                    verificationStatus.title = 'Message verified';
+                    verificationStatus.innerHTML = '&#10003;';
+                } else if (result.signature) {
+                    verificationStatus.className += ' pending';
+                    verificationStatus.title = 'Verification pending';
+                    verificationStatus.innerHTML = '&#8943;';
+                } else {
+                    verificationStatus.className += ' unverified';
+                    verificationStatus.title = 'Message not verified';
+                    verificationStatus.innerHTML = '&#33;';
+                }
+                leftSection.insertBefore(verificationStatus, leftSection.firstChild);
+            }
+            
+            // Add source file link if needed
+            if (result.file && messageVerificationEnabled) {
+                const rightSection = pendingMessage.querySelector('.header-right');
+                const sourceLink = document.createElement('a');
+                sourceLink.className = 'source-link';
+                sourceLink.href = `/messages/${result.file.split('/').pop()}`;
+                sourceLink.textContent = '📄';
+                sourceLink.title = 'View message source file';
+                sourceLink.target = '_blank';
+                rightSection.appendChild(sourceLink);
+            }
+        }
         
         return result;
     } catch (error) {
         console.error('Error sending message:', error);
+        // Update pending message to show error
+        const pendingMessage = document.querySelector(`[data-message-id="${tempMessage.id}"]`);
+        if (pendingMessage) {
+            const timestamp = pendingMessage.querySelector('.timestamp');
+            if (timestamp) {
+                timestamp.className = 'timestamp error';
+                timestamp.textContent = 'Failed to send';
+                timestamp.title = 'Message failed to send';
+            }
+        }
         throw error;
-    }
-}
-
-// Update global verification status based on all messages
-function updateGlobalVerificationStatus() {
-    // Only update if verification is enabled
-    if (!messageVerificationEnabled) {
-        const globalStatus = document.getElementById('global-verification-status');
-        if (globalStatus) {
-            globalStatus.style.display = 'none';
-        }
-        return;
-    }
-    
-    const messages = document.querySelectorAll('.message');
-    const globalStatus = document.getElementById('global-verification-status');
-    
-    if (!messages.length || !globalStatus) return;
-    
-    let allVerified = true;
-    let anyVerified = false;
-    
-    messages.forEach(message => {
-        const status = message.querySelector('.verification-status');
-        if (status && status.classList.contains('verified')) {
-            anyVerified = true;
-        } else {
-            allVerified = false;
-        }
-    });
-    
-    globalStatus.className = 'global-verification-status';
-    
-    if (allVerified) {
-        globalStatus.classList.add('verified');
-        globalStatus.textContent = 'Chat Verification Status: All Messages Verified';
-    } else if (anyVerified) {
-        globalStatus.classList.add('partial');
-        globalStatus.textContent = 'Chat Verification Status: Some Messages Verified';
-    } else {
-        globalStatus.classList.add('unverified');
-        globalStatus.textContent = 'Chat Verification Status: No Messages Verified';
     }
 }
 
@@ -422,32 +382,86 @@ function setupMessageInput() {
             e.preventDefault();
             const content = messageInput.value.trim();
             if (content) {
+                // Clear input immediately
+                messageInput.value = '';
+                
                 try {
                     await sendMessage(content);
-                    messageInput.value = '';
                 } catch (error) {
                     console.error('Failed to send message:', error);
                     alert('Failed to send message. Please try again.');
+                    // Restore the message if sending failed
+                    messageInput.value = content;
                 }
             }
         });
-
-        // Handle Enter key press
+        
+        // Handle Enter key press (Shift+Enter for new line)
         messageInput.addEventListener('keydown', async (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
+            if (e.key === 'Enter') {
+                if (e.shiftKey) {
+                    // Allow Shift+Enter to create a new line
+                    return;
+                }
                 e.preventDefault();
                 const content = messageInput.value.trim();
                 if (content) {
+                    // Clear input immediately
+                    messageInput.value = '';
+                    
                     try {
                         await sendMessage(content);
-                        messageInput.value = '';
                     } catch (error) {
                         console.error('Failed to send message:', error);
                         alert('Failed to send message. Please try again.');
+                        // Restore the message if sending failed
+                        messageInput.value = content;
                     }
                 }
             }
         });
+    }
+}
+
+// Update global verification status based on all messages
+function updateGlobalVerificationStatus() {
+    // Only update if verification is enabled
+    if (!messageVerificationEnabled) {
+        const globalStatus = document.getElementById('global-verification-status');
+        if (globalStatus) {
+            globalStatus.style.display = 'none';
+        }
+        return;
+    }
+    
+    const messages = document.querySelectorAll('.message');
+    const globalStatus = document.getElementById('global-verification-status');
+    
+    if (!messages.length || !globalStatus) return;
+    
+    let allVerified = true;
+    let anyVerified = false;
+    
+    messages.forEach(message => {
+        const status = message.querySelector('.verification-status');
+        if (status && status.classList.contains('verified')) {
+            anyVerified = true;
+        } else {
+            allVerified = false;
+        }
+    });
+    
+    globalStatus.className = 'global-verification-status';
+    
+    if (allVerified) {
+        globalStatus.classList.add('verified');
+        globalStatus.textContent = 'Chat Verification Status: All Messages Verified';
+    } else if (anyVerified) {
+        globalStatus.classList.add('partial');
+        globalStatus.textContent = 'Chat Verification Status: Some Messages Verified';
+    } else {
+        globalStatus.classList.add('unverified');
+        globalStatus.textContent = 'Chat Verification Status: No Messages Verified';
     }
 }
 

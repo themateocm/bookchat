@@ -270,10 +270,27 @@ class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
                     sign=has_key  # Only sign if user has a key pair
                 )
                 logger.info(f"Message save {'successful' if success else 'failed'} with signing={has_key}")
+
+                # Start git operations in a background thread if save was successful
+                if success:
+                    def git_ops():
+                        try:
+                            # Get the latest message file (the one we just saved)
+                            latest_message = max(storage.messages_dir.glob('*.txt'), key=os.path.getctime)
+                            storage.git_manager.add_and_commit_file(
+                                str(latest_message),
+                                f"Add message from {author}"
+                            )
+                            storage.git_manager.push()
+                        except Exception as e:
+                            logger.error(f"Git operations failed: {e}", exc_info=True)
+                    
+                    threading.Thread(target=git_ops, daemon=True).start()
+                    
             except Exception as e:
                 logger.error(f"Exception while saving message: {e}\n{traceback.format_exc()}")
                 success = False
-            
+        
             if success:
                 # Get the latest messages to return the new message
                 messages = storage.get_messages(limit=1)
