@@ -11,6 +11,9 @@ import shutil
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 import time
+import logging
+
+logger = logging.getLogger(__name__)
 
 class KeyManager:
     def __init__(self, private_keys_dir, public_keys_dir):
@@ -190,7 +193,7 @@ class GitManager:
             
             # Stage the file
             relative_path = filepath.relative_to(self.repo_path)
-            subprocess.run(['git', 'add', str(relative_path)], cwd=str(self.repo_path), check=True)
+            subprocess.run(['git', 'add', str(relative_path)], cwd=str(self.repo_path), check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             
             # Check if there are any changes to commit
             status = subprocess.run(
@@ -211,11 +214,13 @@ class GitManager:
                 ['git', 'commit', '--no-verify', '-m', commit_message],
                 cwd=str(self.repo_path),
                 check=True,
-                env={**os.environ, 'GIT_AUTHOR_NAME': author, 'GIT_AUTHOR_EMAIL': f'{author}@bookchat.local'}
+                env={**os.environ, 'GIT_AUTHOR_NAME': author, 'GIT_AUTHOR_EMAIL': f'{author}@bookchat.local'},
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
             )
             
             # Push to GitHub
-            subprocess.run(['git', 'push', 'origin', 'main'], cwd=str(self.repo_path), check=True)
+            subprocess.run(['git', 'push', 'origin', 'main'], cwd=str(self.repo_path), check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             print(f"Successfully synced {relative_path} to GitHub")
             
         except subprocess.CalledProcessError as e:
@@ -234,7 +239,13 @@ class GitManager:
 
         try:
             # Fetch latest changes
-            subprocess.run(['git', 'fetch', 'origin', 'main'], cwd=str(self.repo_path), check=True)
+            subprocess.run(
+                ['git', 'fetch', 'origin', 'main'],
+                cwd=str(self.repo_path),
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
             
             # Check if we're behind origin/main
             status = subprocess.run(
@@ -247,15 +258,20 @@ class GitManager:
             
             if int(status.stdout.strip()) > 0:
                 # We're behind, pull changes
-                subprocess.run(['git', 'pull', 'origin', 'main'], cwd=str(self.repo_path), check=True)
-                print("Successfully pulled latest changes from GitHub")
+                subprocess.run(
+                    ['git', 'pull', 'origin', 'main'],
+                    cwd=str(self.repo_path),
+                    check=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
+                )
                 self.last_pull_time = current_time
                 return True
                 
             self.last_pull_time = current_time
             return False
         except subprocess.CalledProcessError as e:
-            print(f"Failed to pull from GitHub: {e}")
+            logger.error(f"Failed to pull from GitHub: {e}")
             return False
             
     def ensure_repo_exists(self):
@@ -539,8 +555,8 @@ class GitManager:
             
             # Only proceed if there are changes (status will be empty if no changes)
             if status:
-                subprocess.run(['git', 'add', filepath], cwd=self.repo_path, check=True)
-                subprocess.run(['git', 'commit', '-m', commit_msg, f'--author={author}'], cwd=self.repo_path, check=True)
+                subprocess.run(['git', 'add', filepath], cwd=self.repo_path, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                subprocess.run(['git', 'commit', '-m', commit_msg, f'--author={author}'], cwd=self.repo_path, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 return True
             else:
                 print(f"No changes to commit for {filepath}")
@@ -552,6 +568,9 @@ class GitManager:
 
     def push(self):
         """Push changes to remote repository."""
+        if not self.use_github:
+            return False
+            
         try:
             # Check if there are commits to push
             status = subprocess.run(
@@ -567,11 +586,13 @@ class GitManager:
                 return True
                 
             subprocess.run(
-                ['git', 'push'],
+                ['git', 'push', 'origin', 'main'],
                 cwd=str(self.repo_path),
                 check=True,
                 capture_output=True,
-                text=True
+                text=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
             )
             return True
         except subprocess.CalledProcessError as e:
