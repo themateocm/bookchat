@@ -348,7 +348,11 @@ class GitManager:
             # Not JSON, parse as plaintext with footers
             metadata, message = self.parse_message(content)
             
-            # Try to parse date in multiple formats
+            # Try to get date in this order:
+            # 1. From metadata Date header
+            # 2. From filename (YYYYMMDD_HHMMSS)
+            # 3. From git commit timestamp
+            # 4. Mark as "No timestamp"
             date = metadata.get('Date')
             if date:
                 try:
@@ -358,19 +362,23 @@ class GitManager:
                     date_str = parsed_date.astimezone().strftime('%Y-%m-%dT%H:%M:%S%z')
                     date = date_str[:-2] + ':' + date_str[-2:]  # Insert colon in timezone offset
                 except ValueError:
-                    try:
-                        # Try to parse from filename (YYYYMMDD_HHMMSS)
-                        parts = filename.split('_')
-                        if len(parts) >= 2:
-                            date = f"{parts[0][:4]}-{parts[0][4:6]}-{parts[0][6:]}T{parts[1][:2]}:{parts[1][2:4]}:{parts[1][4:]}Z"
-                    except:
-                        # If all date parsing fails, use file modification time
-                        date = datetime.fromtimestamp(filepath.stat().st_mtime).strftime('%Y-%m-%dT%H:%M:%S%z')
-                        date = date[:-2] + ':' + date[-2:]  # Insert colon in timezone offset
-            else:
-                # No date in metadata, use file modification time
-                date = datetime.fromtimestamp(filepath.stat().st_mtime).strftime('%Y-%m-%dT%H:%M:%S%z')
-                date = date[:-2] + ':' + date[-2:]  # Insert colon in timezone offset
+                    date = None
+            
+            if not date:
+                try:
+                    # Try to parse from filename (YYYYMMDD_HHMMSS)
+                    parts = filename.split('_')
+                    if len(parts) >= 2:
+                        date = f"{parts[0][:4]}-{parts[0][4:6]}-{parts[0][6:]}T{parts[1][:2]}:{parts[1][2:4]}:{parts[1][4:]}Z"
+                except:
+                    date = None
+            
+            if not date:
+                # Try to get commit timestamp
+                date = self.get_commit_timestamp(str(filepath.relative_to(self.repo_path)))
+            
+            if not date:
+                date = "No timestamp"
             
             # Try to get author from metadata or filename
             author = metadata.get('Author', 'anonymous')
@@ -569,6 +577,24 @@ class GitManager:
         except subprocess.CalledProcessError as e:
             print(f"Error pushing to remote: {e.stderr}")
             return False
+
+    def get_commit_timestamp(self, filepath):
+        """Get the timestamp of the last commit that modified this file."""
+        try:
+            # Get the timestamp of the last commit that modified this file
+            result = subprocess.run(
+                ['git', 'log', '-1', '--format=%aI', filepath],
+                cwd=str(self.repo_path),
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            timestamp = result.stdout.strip()
+            if timestamp:
+                return timestamp
+        except subprocess.CalledProcessError as e:
+            print(f"Failed to get commit timestamp: {e}")
+        return None
 
 def main():
     """Main function for testing"""
