@@ -449,41 +449,26 @@ class GitManager:
             author: Author of the commit
         """
         try:
-            # Check if file has changes to commit
+            # Check if file has any changes
             status = subprocess.run(
                 ['git', 'status', '--porcelain', filepath],
-                cwd=str(self.repo_path),
-                check=True,
-                capture_output=True,
-                text=True
-            )
-            
-            # If no changes, return early
-            if not status.stdout.strip():
-                return True
-            
-            # Add the specific file
-            subprocess.run(
-                ['git', 'add', filepath],
-                cwd=str(self.repo_path),
-                check=True,
-                capture_output=True,
-                text=True
-            )
-            
-            # Commit the file
-            subprocess.run(
-                ['git', 'commit', '--no-verify', filepath, '-m', commit_msg],
-                cwd=str(self.repo_path),
-                check=True,
+                cwd=self.repo_path,
                 capture_output=True,
                 text=True,
-                env={**os.environ, 'GIT_AUTHOR_NAME': author, 'GIT_AUTHOR_EMAIL': f'{author}@bookchat.local'}
-            )
+                check=True
+            ).stdout.strip()
             
-            return True
+            # Only proceed if there are changes (status will be empty if no changes)
+            if status:
+                subprocess.run(['git', 'add', filepath], cwd=self.repo_path, check=True)
+                subprocess.run(['git', 'commit', '-m', commit_msg, f'--author={author}'], cwd=self.repo_path, check=True)
+                return True
+            else:
+                print(f"No changes to commit for {filepath}")
+                return False
+                
         except subprocess.CalledProcessError as e:
-            print(f"Error in git operations: {e.stderr}")
+            print(f"Error in git operations: {e}")
             return False
 
     def push(self):

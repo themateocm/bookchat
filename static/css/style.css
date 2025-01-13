@@ -574,22 +574,29 @@ body {
 
 .status-indicator {
     display: inline-block;
-    width: 12px;
-    height: 12px;
+    width: 10px;
+    height: 10px;
     border-radius: 50%;
     margin-right: 8px;
 }
 
 .status-good {
-    background-color: #22c55e;
-}
-
-.status-warning {
-    background-color: #f59e0b;
+    background-color: #4CAF50;
 }
 
 .status-error {
-    background-color: #ef4444;
+    background-color: #f44336;
+}
+
+.status-disabled {
+    background-color: #9e9e9e;
+}
+
+.status-note {
+    color: #666;
+    font-size: 0.9em;
+    margin-left: 8px;
+    font-style: italic;
 }
 
 .timestamp {

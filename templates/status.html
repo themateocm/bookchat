@@ -34,11 +34,16 @@
                 Git Repository Status: {{ "Healthy" if git_status else "Error" }}
             </p>
             <p>
-                <span class="status-indicator {{ 'status-good' if signature_status else 'status-error' }}"></span>
-                Signature System: {{ "Operational" if signature_status else "Error" }}
+                <span class="status-indicator {{ 'status-disabled' if not message_verification_enabled else ('status-good' if signature_status else 'status-error') }}"></span>
+                Signature System: {{ "Disabled" if not message_verification_enabled else ("Operational" if signature_status else "Error") }}
+                {% if not message_verification_enabled %}
+                <span class="status-note">(MESSAGE_VERIFICATION is set to false)</span>
+                {% endif %}
             </p>
             <p>Current System Time: <span class="timestamp">{{ current_time }}</span></p>
             <p>Latest Commit: <a href="https://github.com/{{ repo_name }}/commit/{{ latest_commit }}" target="_blank" class="github-link"><code>{{ latest_commit[:8] }}</code></a></p>
+            <p>Messages in System: <strong>{{ current_message_count }}</strong></p>
+            <p>Messages in Archives: <strong>{{ archived_message_count }}</strong></p>
         </div>
 
         <div class="verification-section">

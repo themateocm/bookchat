@@ -487,13 +487,15 @@ class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
         except subprocess.CalledProcessError:
             git_status = False
 
-        try:
-            # Check if we can create and verify a test signature
-            test_message = b"test"
-            signature = storage.key_manager.sign_message(test_message.decode())
-            signature_status = True
-        except Exception:
-            signature_status = False
+        signature_status = False
+        if MESSAGE_VERIFICATION_ENABLED:
+            try:
+                # Check if we can create and verify a test signature
+                test_message = b"test"
+                signature = storage.key_manager.sign_message(test_message.decode())
+                signature_status = True
+            except Exception:
+                signature_status = False
 
         try:
             # Get latest commit
@@ -507,13 +509,24 @@ class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
         public_keys_dir = Path('identity/public_keys')
         public_keys = [f.name for f in public_keys_dir.glob('*.pub')] if public_keys_dir.exists() else []
 
+        # Get message counts
+        current_messages = storage.get_messages()
+        current_message_count = len(current_messages)
+        
+        # Get archive metrics
+        archive_metrics = storage.archiver.get_metrics()
+        archived_message_count = archive_metrics['total_messages_archived']
+
         return {
             'git_status': git_status,
             'signature_status': signature_status,
+            'message_verification_enabled': MESSAGE_VERIFICATION_ENABLED,
             'latest_commit': latest_commit,
             'public_keys': public_keys,
-            'current_time': '2025-01-13T09:51:18-05:00',  # Using provided timestamp
-            'repo_name': os.environ.get('GITHUB_REPO', '')
+            'current_time': '2025-01-13T11:24:24-05:00',  # Using provided timestamp
+            'repo_name': os.environ.get('GITHUB_REPO', ''),
+            'current_message_count': current_message_count,
+            'archived_message_count': archived_message_count
         }
 
     def serve_status_page(self):
