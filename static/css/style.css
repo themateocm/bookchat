@@ -503,3 +503,125 @@ body {
 .theme-toggle:hover {
     background: var(--button-hover);
 }
+
+/* Navigation links */
+.nav-links {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.nav-link {
+    text-decoration: none;
+    color: var(--text-primary);
+    padding: 8px 16px;
+    border-radius: 4px;
+    transition: all 0.2s ease;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.nav-link:hover {
+    background: var(--button-bg);
+    color: var(--button-text);
+}
+
+/* System Status specific styling */
+.nav-link[href="/status"]::before {
+    content: "⚡";
+    font-size: 1.1em;
+}
+
+.nav-link[href="/status"] {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+}
+
+.nav-link[href="/status"]:hover {
+    background: var(--button-bg);
+    border-color: var(--button-bg);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 4px var(--message-shadow);
+}
+
+/* Status page specific styles */
+.verification-section {
+    background: var(--message-bg);
+    border: 1px solid var(--message-border);
+    border-radius: 8px;
+    padding: 20px;
+    margin: 20px 0;
+    box-shadow: 0 2px 4px var(--message-shadow);
+    transition: box-shadow 0.2s ease;
+}
+
+.verification-section:hover {
+    box-shadow: 0 4px 8px var(--message-hover-shadow);
+}
+
+.code-block {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    padding: 15px;
+    border-radius: 4px;
+    overflow-x: auto;
+    font-family: monospace;
+    margin: 10px 0;
+    border: 1px solid var(--border-color);
+}
+
+.status-indicator {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    margin-right: 8px;
+}
+
+.status-good {
+    background-color: #22c55e;
+}
+
+.status-warning {
+    background-color: #f59e0b;
+}
+
+.status-error {
+    background-color: #ef4444;
+}
+
+.timestamp {
+    font-family: monospace;
+    background: var(--bg-secondary);
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: var(--text-primary);
+}
+
+.github-link {
+    color: var(--button-bg);
+    text-decoration: none;
+    transition: color 0.2s ease;
+}
+
+.github-link:hover {
+    color: var(--button-hover);
+    text-decoration: underline;
+}
+
+.download-link {
+    display: inline-block;
+    padding: 6px 12px;
+    background: var(--button-bg);
+    color: var(--button-text);
+    text-decoration: none;
+    border-radius: 4px;
+    margin: 4px 0;
+    transition: background-color 0.2s ease;
+}
+
+.download-link:hover {
+    background: var(--button-hover);
+}

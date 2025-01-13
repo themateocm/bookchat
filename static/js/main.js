@@ -451,42 +451,5 @@ function setupMessageInput() {
     }
 }
 
-// Theme management
-const themeToggle = document.getElementById('theme-toggle');
-const themeToggleText = document.getElementById('theme-toggle-text');
-
-// Check for saved theme preference, otherwise use system preference
-const getPreferredTheme = () => {
-    const savedTheme = localStorage.getItem('theme');
-    if (savedTheme) {
-        return savedTheme;
-    }
-    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-};
-
-// Apply theme to document
-const applyTheme = (theme) => {
-    document.documentElement.setAttribute('data-theme', theme);
-    themeToggleText.textContent = theme === 'dark' ? '☀️' : '🌙';
-    localStorage.setItem('theme', theme);
-};
-
-// Initialize theme
-applyTheme(getPreferredTheme());
-
-// Theme toggle click handler
-themeToggle.addEventListener('click', () => {
-    const currentTheme = document.documentElement.getAttribute('data-theme');
-    const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
-    applyTheme(newTheme);
-});
-
-// Listen for system theme changes
-window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
-    if (!localStorage.getItem('theme')) {
-        applyTheme(e.matches ? 'dark' : 'light');
-    }
-});
-
 // Username validation regex - only allow alphanumeric and underscore, 3-20 chars
 const USERNAME_REGEX = /^[a-zA-Z0-9_]{3,20}$/;
