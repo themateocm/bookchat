@@ -464,6 +464,15 @@ class GitManager:
                 verified = self.verify_message(message, metadata)
                 metadata['verified'] = str(verified if verified is not None else False).lower()
                 
+                # Get commit hash if GitHub is enabled
+                commit_hash = ""
+                if self.use_github:
+                    try:
+                        rel_path = filename.relative_to(self.repo_path)
+                        commit_hash = self.get_commit_hash(str(rel_path))
+                    except ValueError:
+                        pass
+
                 return {
                     'id': str(filename),
                     'content': message,
@@ -472,7 +481,9 @@ class GitManager:
                     'parent_id': metadata.get('Parent-Message'),
                     'signed': 'Signature' in metadata,
                     'verified': metadata['verified'],
-                    'type': metadata.get('Type', 'message')
+                    'type': metadata.get('Type', 'message'),
+                    'commit_hash': commit_hash,
+                    'repo_name': self.repo_name if self.use_github else ''
                 }
         
         # First try to read from main repo
@@ -667,6 +678,27 @@ class GitManager:
         except subprocess.CalledProcessError as e:
             logger.error(f"Failed to get commit timestamp: {e}")
         return None
+
+    def get_commit_hash(self, filepath: str) -> str:
+        """Get the short commit hash of the last commit that modified this file.
+        
+        Args:
+            filepath: Path to the file relative to repo root
+            
+        Returns:
+            Short commit hash (7 characters) or empty string if not found
+        """
+        try:
+            result = subprocess.run(
+                ['git', 'rev-parse', '--short=7', 'HEAD', '--', filepath],
+                cwd=str(self.repo_path),
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            return result.stdout.strip()
+        except subprocess.CalledProcessError:
+            return ""
 
 def main():
     """Main function for testing"""

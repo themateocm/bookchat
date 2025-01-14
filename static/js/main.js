@@ -100,84 +100,64 @@ function createMessageElement(message) {
     const leftSection = document.createElement('div');
     leftSection.className = 'header-left';
     
-    // Add verification status indicator (only when not pending)
-    if (!message.pending && messageVerificationEnabled) {
-        const verificationStatus = document.createElement('span');
-        verificationStatus.className = 'verification-status';
-        
-        if (message.verified && message.verified.toLowerCase() === 'true') {
-            verificationStatus.className += ' verified';
-            verificationStatus.title = 'Message verified';
-            verificationStatus.innerHTML = '&#10003;';
-        } else if (message.signature) {
-            verificationStatus.className += ' pending';
-            verificationStatus.title = 'Verification pending';
-            verificationStatus.innerHTML = '&#8943;';
-        } else {
-            verificationStatus.className += ' unverified';
-            verificationStatus.title = 'Message not verified';
-            verificationStatus.innerHTML = '&#33;';
-        }
-        leftSection.appendChild(verificationStatus);
-    }
-    
-    // Add author info
+    // Add author name
     const authorSpan = document.createElement('span');
     authorSpan.className = 'author';
     authorSpan.textContent = message.author || 'anonymous';
-    if (messageVerificationEnabled && !message.pending) {
-        if (message.verified && message.verified.toLowerCase() === 'true') {
-            authorSpan.classList.add('verified');
-            authorSpan.title = 'Verified message';
-        }
-        if (message.signature) {
-            authorSpan.classList.add('signed');
-        }
-        
-        // Add public key link if available and verification is enabled
-        if (message.public_key) {
-            const keyLink = document.createElement('a');
-            keyLink.className = 'key-link';
-            keyLink.href = `/${message.public_key}`; // Link to the public key file
-            keyLink.textContent = '&#128273;';
-            keyLink.title = `View ${message.author}'s public key`;
-            keyLink.target = '_blank'; // Open in new tab
-            leftSection.appendChild(keyLink);
-        }
-    }
     leftSection.appendChild(authorSpan);
     
-    messageHeader.appendChild(leftSection);
+    // Add verification status if enabled
+    if (messageVerificationEnabled) {
+        const verifiedSpan = document.createElement('span');
+        verifiedSpan.className = `verification-status ${message.verified && message.verified.toLowerCase() === 'true' ? 'verified' : 'unverified'}`;
+        verifiedSpan.title = message.verified && message.verified.toLowerCase() === 'true' ? 'Message signature verified' : 'Message not verified';
+        verifiedSpan.textContent = message.verified && message.verified.toLowerCase() === 'true' ? '&#10003;' : '&#33;';
+        leftSection.appendChild(verifiedSpan);
+    }
     
-    // Create right section for timestamp and file
+    // Create right section for timestamp and commit hash
     const rightSection = document.createElement('div');
     rightSection.className = 'header-right';
     
-    // Add timestamp or pending indicator
-    const timestamp = document.createElement('span');
-    timestamp.className = 'timestamp';
+    // Add timestamp
+    const timestampSpan = document.createElement('span');
+    timestampSpan.className = 'timestamp';
     if (message.pending) {
-        timestamp.className += ' pending';
-        timestamp.textContent = 'Sending...';
-        timestamp.title = 'Message is being sent';
+        timestampSpan.className += ' pending';
+        timestampSpan.textContent = 'Sending...';
+        timestampSpan.title = 'Message is being sent';
     } else {
         const messageDate = new Date(message.createdAt);
-        timestamp.textContent = messageDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        timestamp.title = messageDate.toLocaleString();
+        timestampSpan.textContent = messageDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        timestampSpan.title = messageDate.toLocaleString();
     }
-    rightSection.appendChild(timestamp);
+    rightSection.appendChild(timestampSpan);
+    
+    // Add commit hash with GitHub link if available
+    if (message.commit_hash && message.repo_name) {
+        const commitSpan = document.createElement('span');
+        commitSpan.className = 'commit-hash';
+        const commitLink = document.createElement('a');
+        commitLink.href = `https://github.com/${message.repo_name}/commit/${message.commit_hash}`;
+        commitLink.target = '_blank';
+        commitLink.textContent = message.commit_hash;
+        commitLink.title = 'View commit on GitHub';
+        commitSpan.appendChild(commitLink);
+        rightSection.appendChild(commitSpan);
+    }
     
     // Add source file link if available and verification is enabled and not pending
     if (message.file && messageVerificationEnabled && !message.pending) {
         const sourceLink = document.createElement('a');
         sourceLink.className = 'source-link';
         sourceLink.href = `/messages/${message.file.split('/').pop()}`; // Get just the filename
-        sourceLink.textContent = '📄'; // Document icon
+        sourceLink.textContent = '&#128273;';
         sourceLink.title = 'View message source file';
         sourceLink.target = '_blank'; // Open in new tab
         rightSection.appendChild(sourceLink);
     }
     
+    messageHeader.appendChild(leftSection);
     messageHeader.appendChild(rightSection);
     messageDiv.appendChild(messageHeader);
     
@@ -268,7 +248,7 @@ async function sendMessage(content, type = 'message') {
                 const sourceLink = document.createElement('a');
                 sourceLink.className = 'source-link';
                 sourceLink.href = `/messages/${result.file.split('/').pop()}`;
-                sourceLink.textContent = '📄';
+                sourceLink.textContent = '&#128273;';
                 sourceLink.title = 'View message source file';
                 sourceLink.target = '_blank';
                 rightSection.appendChild(sourceLink);

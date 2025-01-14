@@ -757,3 +757,30 @@ body {
 .download-link:hover {
     background: var(--button-hover);
 }
+
+/* Commit hash styling */
+.commit-hash {
+    margin-left: 8px;
+    font-family: monospace;
+    font-size: 0.9em;
+}
+
+.commit-hash a {
+    color: #666;
+    text-decoration: none;
+    padding: 2px 4px;
+    border-radius: 3px;
+    background: #f0f0f0;
+}
+
+.commit-hash a:hover {
+    background: #e0e0e0;
+    color: #333;
+}
+
+/* Adjust header spacing */
+.header-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
