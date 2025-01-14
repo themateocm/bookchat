@@ -310,10 +310,15 @@ class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
                 logger.info(f"Retrieved new message: {new_message}")
                 
                 # Return response
-                self.send_response(HTTPStatus.OK)
-                self.send_header('Content-Type', 'application/json')
-                self.end_headers()
-                self.wfile.write(json.dumps(new_message).encode('utf-8'))
+                try:
+                    self.send_response(HTTPStatus.OK)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(json.dumps(new_message).encode('utf-8'))
+                except BrokenPipeError:
+                    # Client disconnected, log it but don't treat as error
+                    logger.info("Client disconnected before response could be sent")
+                    return
             else:
                 self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Failed to save message")
         except Exception as e:
