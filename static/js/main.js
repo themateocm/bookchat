@@ -1,7 +1,10 @@
-// BookChat JavaScript (2025-01-08T12:20:30-05:00)
+// MITChat JavaScript (2025-01-08T12:20:30-05:00)
 
 let currentUsername = 'anonymous';
 let messageVerificationEnabled = false;
+
+// Available reactions
+const REACTIONS = ['👍', '❤️', '😄', '🤔'];
 
 // Initialize everything
 document.addEventListener('DOMContentLoaded', async () => {
@@ -9,7 +12,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     setupMessageInput();
     setupUsernameUI();
     await loadMessages();
+    // Ensure we scroll to bottom on initial load
+    scrollToBottom();
 });
+
+// Helper function to scroll to bottom of messages
+function scrollToBottom() {
+    const messagesDiv = document.getElementById('messages');
+    // Small delay to ensure content is rendered
+    setTimeout(() => {
+        messagesDiv.scrollTop = messagesDiv.scrollHeight;
+    }, 100);
+}
 
 async function verifyUsername() {
     try {
@@ -58,17 +72,16 @@ async function loadMessages() {
         const messagesContainer = document.getElementById('messages-container');
         messagesContainer.innerHTML = '';
         
-        // Sort messages by date (newest at bottom)
-        messages.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-        messages.reverse();
+        // Sort messages by date (oldest to newest)
+        messages.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
         
         // Add messages to container
         for (const message of messages) {
             messagesContainer.appendChild(createMessageElement(message));
         }
         
-        // Scroll to bottom
-        messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        // Scroll to bottom to show most recent messages
+        scrollToBottom();
         
         // Update current username
         if (data.currentUsername) {
@@ -87,88 +100,179 @@ async function loadMessages() {
     }
 }
 
+function formatMessageDate(date) {
+    const now = new Date('2025-01-14T15:04:15-05:00');  // Current time
+    const messageDate = new Date(date);
+    const diffDays = Math.floor((now - messageDate) / (1000 * 60 * 60 * 24));
+    
+    // Format time
+    const timeStr = messageDate.toLocaleTimeString([], { 
+        hour: '2-digit', 
+        minute: '2-digit',
+        hour12: true 
+    }).toLowerCase();
+    
+    // Format date based on how old it is
+    if (diffDays < 7) {
+        // Within last week - show day of week
+        const dayOfWeek = messageDate.toLocaleDateString('en-US', { weekday: 'long' });
+        if (diffDays === 0) {
+            return `${timeStr} today`;
+        } else if (diffDays === 1) {
+            return `${timeStr} yesterday`;
+        } else {
+            return `${timeStr} on ${dayOfWeek}`;
+        }
+    } else {
+        // Older than a week - show full date
+        const dateStr = messageDate.toLocaleDateString('en-US', { 
+            month: 'short',
+            day: 'numeric',
+            year: messageDate.getFullYear() !== now.getFullYear() ? 'numeric' : undefined
+        });
+        return `${timeStr} on ${dateStr}`;
+    }
+}
+
 function createMessageElement(message) {
     const messageDiv = document.createElement('div');
     messageDiv.className = 'message';
+    messageDiv.className += message.author === currentUsername ? ' right' : ' left';
     messageDiv.dataset.messageId = message.id;
     
-    // Create message header for author and timestamp
-    const messageHeader = document.createElement('div');
-    messageHeader.className = 'message-header';
+    // Add author name above bubble
+    const authorDiv = document.createElement('div');
+    authorDiv.className = 'message-author';
+    authorDiv.textContent = message.author || 'anonymous';
+    messageDiv.appendChild(authorDiv);
     
-    // Create left section for author and verification status
-    const leftSection = document.createElement('div');
-    leftSection.className = 'header-left';
+    // Create content wrapper for positioning
+    const contentWrapper = document.createElement('div');
+    contentWrapper.className = 'message-content-wrapper';
     
-    // Add author name
-    const authorSpan = document.createElement('span');
-    authorSpan.className = 'author';
-    authorSpan.textContent = message.author || 'anonymous';
-    leftSection.appendChild(authorSpan);
+    // Create message content
+    const content = document.createElement('div');
+    content.className = 'message-content';
+    let messageText = message.content;
+    messageText = messageText.replace(/^(Date|Author|Message):[^\n]*\n/gm, '');
+    messageText = messageText.trim();
+    content.textContent = messageText;
     
-    // Add verification status if enabled
-    if (messageVerificationEnabled) {
-        const verifiedSpan = document.createElement('span');
-        verifiedSpan.className = `verification-status ${message.verified && message.verified.toLowerCase() === 'true' ? 'verified' : 'unverified'}`;
-        verifiedSpan.title = message.verified && message.verified.toLowerCase() === 'true' ? 'Message signature verified' : 'Message not verified';
-        verifiedSpan.textContent = message.verified && message.verified.toLowerCase() === 'true' ? '&#10003;' : '&#33;';
-        leftSection.appendChild(verifiedSpan);
+    // Add reaction button inside content wrapper
+    const reactionButton = document.createElement('button');
+    reactionButton.className = 'reaction-button';
+    reactionButton.textContent = '😀';
+    reactionButton.title = 'Add reaction';
+    reactionButton.onclick = (e) => {
+        e.stopPropagation();
+        toggleReactionPicker(contentWrapper);
+    };
+    
+    // Create reaction picker (hidden by default)
+    const reactionPicker = document.createElement('div');
+    reactionPicker.className = 'reaction-picker';
+    REACTIONS.forEach(emoji => {
+        const emojiButton = document.createElement('span');
+        emojiButton.className = 'reaction-picker-emoji';
+        emojiButton.textContent = emoji;
+        emojiButton.onclick = (e) => {
+            e.stopPropagation();
+            toggleReaction(message.id, emoji);
+            reactionPicker.classList.remove('active');
+        };
+        reactionPicker.appendChild(emojiButton);
+    });
+    
+    contentWrapper.appendChild(content);
+    contentWrapper.appendChild(reactionButton);
+    contentWrapper.appendChild(reactionPicker);
+    messageDiv.appendChild(contentWrapper);
+    
+    // Create reactions container
+    const reactionsContainer = document.createElement('div');
+    reactionsContainer.className = 'reactions-container';
+    
+    // Add existing reactions
+    if (message.reactions) {
+        Object.entries(message.reactions).forEach(([emoji, users]) => {
+            if (users.length > 0) {
+                const reaction = document.createElement('div');
+                reaction.className = 'reaction';
+                if (users.includes(currentUsername)) {
+                    reaction.className += ' active';
+                }
+                reaction.onclick = () => toggleReaction(message.id, emoji);
+                reaction.innerHTML = `${emoji} <span>${users.length}</span>`;
+                reactionsContainer.appendChild(reaction);
+            }
+        });
     }
     
-    // Create right section for timestamp and commit hash
-    const rightSection = document.createElement('div');
-    rightSection.className = 'header-right';
+    messageDiv.appendChild(reactionsContainer);
+    
+    // Create message metadata
+    const meta = document.createElement('div');
+    meta.className = 'message-meta';
     
     // Add timestamp
     const timestampSpan = document.createElement('span');
-    timestampSpan.className = 'timestamp';
+    timestampSpan.className = 'message-time';
     if (message.pending) {
-        timestampSpan.className += ' pending';
         timestampSpan.textContent = 'Sending...';
-        timestampSpan.title = 'Message is being sent';
     } else {
-        const messageDate = new Date(message.createdAt);
-        timestampSpan.textContent = messageDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        timestampSpan.title = messageDate.toLocaleString();
+        timestampSpan.textContent = formatMessageDate(message.createdAt);
     }
-    rightSection.appendChild(timestampSpan);
+    meta.appendChild(timestampSpan);
     
-    // Add commit hash with GitHub link if available
-    if (message.commit_hash && message.repo_name) {
-        const commitSpan = document.createElement('span');
-        commitSpan.className = 'commit-hash';
-        const commitLink = document.createElement('a');
-        commitLink.href = `https://github.com/${message.repo_name}/commit/${message.commit_hash}`;
-        commitLink.target = '_blank';
-        commitLink.textContent = message.commit_hash;
-        commitLink.title = 'View commit on GitHub';
-        commitSpan.appendChild(commitLink);
-        rightSection.appendChild(commitSpan);
+    // Add verification status if enabled
+    if (messageVerificationEnabled && message.verified && message.verified.toLowerCase() === 'true') {
+        const verifiedSpan = document.createElement('span');
+        verifiedSpan.className = 'verification-status';
+        verifiedSpan.textContent = '✓';
+        meta.appendChild(verifiedSpan);
     }
     
-    // Add source file link if available and verification is enabled and not pending
-    if (message.file && messageVerificationEnabled && !message.pending) {
-        const sourceLink = document.createElement('a');
-        sourceLink.className = 'source-link';
-        sourceLink.href = `/messages/${message.file.split('/').pop()}`; // Get just the filename
-        sourceLink.textContent = '&#128273;';
-        sourceLink.title = 'View message source file';
-        sourceLink.target = '_blank'; // Open in new tab
-        rightSection.appendChild(sourceLink);
-    }
-    
-    messageHeader.appendChild(leftSection);
-    messageHeader.appendChild(rightSection);
-    messageDiv.appendChild(messageHeader);
-    
-    // Add message content
-    const content = document.createElement('div');
-    content.className = 'content';
-    content.textContent = message.content;
-    messageDiv.appendChild(content);
-    
+    messageDiv.appendChild(meta);
     return messageDiv;
 }
+
+// Toggle reaction picker visibility
+function toggleReactionPicker(contentWrapper) {
+    const picker = contentWrapper.querySelector('.reaction-picker');
+    const allPickers = document.querySelectorAll('.reaction-picker.active');
+    allPickers.forEach(p => {
+        if (p !== picker) p.classList.remove('active');
+    });
+    picker.classList.toggle('active');
+}
+
+// Toggle a reaction on a message
+async function toggleReaction(messageId, emoji) {
+    try {
+        const response = await fetch(`/messages/${messageId}/reactions`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ emoji })
+        });
+        
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
+        // Refresh messages to show updated reactions
+        await loadMessages();
+    } catch (error) {
+        console.error('Error toggling reaction:', error);
+    }
+}
+
+// Close reaction pickers when clicking outside
+document.addEventListener('click', () => {
+    const activePickers = document.querySelectorAll('.reaction-picker.active');
+    activePickers.forEach(picker => picker.classList.remove('active'));
+});
 
 async function sendMessage(content, type = 'message') {
     try {
@@ -186,9 +290,8 @@ async function sendMessage(content, type = 'message') {
         const messagesContainer = document.getElementById('messages-container');
         messagesContainer.appendChild(createMessageElement(tempMessage));
         
-        // Scroll to bottom
-        const messagesDiv = document.getElementById('messages');
-        messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        // Scroll to show the new message
+        scrollToBottom();
 
         // Send to server
         const response = await fetch('/messages', {
@@ -212,46 +315,30 @@ async function sendMessage(content, type = 'message') {
             pendingMessage.dataset.messageId = result.id;
             
             // Update the timestamp
-            const timestamp = pendingMessage.querySelector('.timestamp');
+            const timestamp = pendingMessage.querySelector('.message-time');
             if (timestamp) {
                 const messageDate = new Date(result.createdAt);
-                timestamp.textContent = messageDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                timestamp.textContent = formatMessageDate(result.createdAt);
                 timestamp.title = messageDate.toLocaleString();
-                timestamp.classList.remove('pending');
             }
             
             // Add verification status if needed
             if (messageVerificationEnabled) {
-                const leftSection = pendingMessage.querySelector('.header-left');
+                const meta = pendingMessage.querySelector('.message-meta');
                 const verificationStatus = document.createElement('span');
                 verificationStatus.className = 'verification-status';
                 
                 if (result.verified && result.verified.toLowerCase() === 'true') {
-                    verificationStatus.className += ' verified';
-                    verificationStatus.title = 'Message verified';
-                    verificationStatus.innerHTML = '&#10003;';
+                    verificationStatus.title = 'Verified';
+                    verificationStatus.textContent = '✓';
                 } else if (result.signature) {
-                    verificationStatus.className += ' pending';
                     verificationStatus.title = 'Verification pending';
-                    verificationStatus.innerHTML = '&#8943;';
+                    verificationStatus.textContent = '!';
                 } else {
-                    verificationStatus.className += ' unverified';
-                    verificationStatus.title = 'Message not verified';
-                    verificationStatus.innerHTML = '&#33;';
+                    verificationStatus.title = 'Not verified';
+                    verificationStatus.textContent = '!';
                 }
-                leftSection.insertBefore(verificationStatus, leftSection.firstChild);
-            }
-            
-            // Add source file link if needed
-            if (result.file && messageVerificationEnabled) {
-                const rightSection = pendingMessage.querySelector('.header-right');
-                const sourceLink = document.createElement('a');
-                sourceLink.className = 'source-link';
-                sourceLink.href = `/messages/${result.file.split('/').pop()}`;
-                sourceLink.textContent = '&#128273;';
-                sourceLink.title = 'View message source file';
-                sourceLink.target = '_blank';
-                rightSection.appendChild(sourceLink);
+                meta.appendChild(verificationStatus);
             }
         }
         
@@ -261,9 +348,8 @@ async function sendMessage(content, type = 'message') {
         // Update pending message to show error
         const pendingMessage = document.querySelector(`[data-message-id="${tempMessage.id}"]`);
         if (pendingMessage) {
-            const timestamp = pendingMessage.querySelector('.timestamp');
+            const timestamp = pendingMessage.querySelector('.message-time');
             if (timestamp) {
-                timestamp.className = 'timestamp error';
                 timestamp.textContent = 'Failed to send';
                 timestamp.title = 'Message failed to send';
             }
@@ -345,62 +431,30 @@ function setupUsernameUI() {
 }
 
 function setupMessageInput() {
-    // Hide no-JS form and show JS form
-    const noJsForm = document.getElementById('message-form');
-    const jsForm = document.getElementById('js-message-form');
-    if (noJsForm && jsForm) {
-        noJsForm.style.display = 'none';
-        jsForm.style.display = 'flex';
-    }
-    
-    const messageForm = document.getElementById('js-message-form');
+    const messageForm = document.getElementById('message-form');
     const messageInput = document.getElementById('message-input');
-    
-    if (messageForm && messageInput) {
-        // Handle form submit (for button click)
-        messageForm.addEventListener('submit', async (e) => {
+
+    messageForm.addEventListener('submit', async (e) => {
+        e.preventDefault(); // Prevent form submission
+        
+        const content = messageInput.value.trim();
+        if (content) {
+            await sendMessage(content);
+            messageInput.value = '';
+        }
+    });
+
+    // Enable textarea resizing and submit on Enter (Shift+Enter for new line)
+    messageInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
             const content = messageInput.value.trim();
             if (content) {
-                // Clear input immediately
+                sendMessage(content);
                 messageInput.value = '';
-                
-                try {
-                    await sendMessage(content);
-                } catch (error) {
-                    console.error('Failed to send message:', error);
-                    alert('Failed to send message. Please try again.');
-                    // Restore the message if sending failed
-                    messageInput.value = content;
-                }
             }
-        });
-        
-        // Handle Enter key press (Shift+Enter for new line)
-        messageInput.addEventListener('keydown', async (e) => {
-            if (e.key === 'Enter') {
-                if (e.shiftKey) {
-                    // Allow Shift+Enter to create a new line
-                    return;
-                }
-                e.preventDefault();
-                const content = messageInput.value.trim();
-                if (content) {
-                    // Clear input immediately
-                    messageInput.value = '';
-                    
-                    try {
-                        await sendMessage(content);
-                    } catch (error) {
-                        console.error('Failed to send message:', error);
-                        alert('Failed to send message. Please try again.');
-                        // Restore the message if sending failed
-                        messageInput.value = content;
-                    }
-                }
-            }
-        });
-    }
+        }
+    });
 }
 
 // Update global verification status based on all messages
@@ -424,7 +478,7 @@ function updateGlobalVerificationStatus() {
     
     messages.forEach(message => {
         const status = message.querySelector('.verification-status');
-        if (status && status.classList.contains('verified')) {
+        if (status && status.title === 'Verified') {
             anyVerified = true;
         } else {
             allVerified = false;
