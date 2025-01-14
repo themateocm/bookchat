@@ -236,6 +236,8 @@ class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
                 self.handle_username_post()
             elif parsed_path.path == '/change_username':
                 self.handle_username_change()
+            elif parsed_path.path.startswith('/messages/'):
+                self.handle_reaction_post()
             else:
                 self.send_error(HTTPStatus.NOT_FOUND)
         except Exception as e:
@@ -384,6 +386,66 @@ class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
         except Exception as e:
             logger.error(f"Error in username change request", exc_info=True)
             self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR, str(e))
+
+    def handle_reaction_post(self):
+        """Handle reaction posting"""
+        try:
+            # Get content length
+            content_length = int(self.headers.get('Content-Length', 0))
+            logger.debug(f"Content length: {content_length}")
+            
+            # Read the body as plaintext
+            content = self.rfile.read(content_length).decode('utf-8')
+            logger.debug(f"Received reaction body: {content[:200]}...")  # Log first 200 chars to avoid huge logs
+            
+            # Get message id from path
+            message_id = self.path.split('/')[-1]
+            
+            # Get username from cookie if available
+            cookies = {}
+            if 'Cookie' in self.headers:
+                for cookie in self.headers['Cookie'].split(';'):
+                    name, value = cookie.strip().split('=', 1)
+                    cookies[name] = value
+            
+            # Get author from cookie
+            author = cookies.get('username', 'anonymous')
+            logger.info(f"Processing reaction from {author} on message {message_id}: {content}")
+            
+            # Load message file
+            message_path = os.path.join('messages', f"{message_id}.txt")
+            if not os.path.exists(message_path):
+                self.send_error(HTTPStatus.NOT_FOUND, "Message not found")
+                return
+            
+            with open(message_path, 'r') as f:
+                message = json.load(f)
+            
+            # Initialize reactions if needed
+            if 'reactions' not in message:
+                message['reactions'] = {}
+            data = json.loads(content)
+            emoji = data.get('emoji', '')
+            if emoji not in message['reactions']:
+                message['reactions'][emoji] = []
+            
+            # Toggle user's reaction
+            if author in message['reactions'][emoji]:
+                message['reactions'][emoji].remove(author)
+            else:
+                message['reactions'][emoji].append(author)
+            
+            # Save updated message
+            with open(message_path, 'w') as f:
+                json.dump(message, f, indent=2)
+            
+            self.send_response(HTTPStatus.OK)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({'status': 'success'}).encode('utf-8'))
+        except Exception as e:
+            logger.error(f"Error in reaction post handler", exc_info=True)
+            self.handle_error(e)
 
     def serve_file(self, filepath, content_type):
         """Helper method to serve a file with specified content type"""
