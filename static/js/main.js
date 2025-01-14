@@ -6,25 +6,47 @@ let messageVerificationEnabled = false;
 // Available reactions
 const REACTIONS = ['👍', '❤️', '😄', '🤔'];
 
+// Scroll handling
+let isInitialLoad = true;
+let lastScrollHeight = 0;
+let lastScrollTop = 0;
+
+function isAtBottom() {
+    const messages = document.getElementById('messages');
+    const threshold = 100; // pixels from bottom to consider "at bottom"
+    return messages.scrollHeight - messages.scrollTop - messages.clientHeight <= threshold;
+}
+
+function scrollToBottom(force = false) {
+    const messages = document.getElementById('messages');
+    const anchor = document.getElementById('scroll-anchor');
+    
+    if (force || isInitialLoad || isAtBottom()) {
+        // Use IntersectionObserver to ensure the scroll happens after content is fully rendered
+        const observer = new IntersectionObserver((entries) => {
+            entries[0].target.scrollIntoView({ behavior: 'instant' });
+            observer.disconnect();
+        });
+        observer.observe(anchor);
+    }
+}
+
 // Initialize everything
 document.addEventListener('DOMContentLoaded', async () => {
     await verifyUsername();
     setupMessageInput();
     setupUsernameUI();
     await loadMessages();
-    // Ensure we scroll to bottom on initial load
-    scrollToBottom();
+    
+    // Set up scroll position maintenance
+    const messages = document.getElementById('messages');
+    messages.addEventListener('scroll', () => {
+        lastScrollTop = messages.scrollTop;
+        lastScrollHeight = messages.scrollHeight;
+    });
 });
 
-// Helper function to scroll to bottom of messages
-function scrollToBottom() {
-    const messagesDiv = document.getElementById('messages');
-    // Small delay to ensure content is rendered
-    setTimeout(() => {
-        messagesDiv.scrollTop = messagesDiv.scrollHeight;
-    }, 100);
-}
-
+// Helper function to verify username
 async function verifyUsername() {
     try {
         const response = await fetch('/verify_username');
@@ -63,25 +85,32 @@ async function loadMessages() {
         let messages = data.messages;
         messageVerificationEnabled = data.messageVerificationEnabled;
         
-        // Filter out unverified messages when verification is enabled
         if (messageVerificationEnabled) {
             messages = messages.filter(message => message.verified && message.verified.toLowerCase() === 'true');
         }
         
         const messagesDiv = document.getElementById('messages');
         const messagesContainer = document.getElementById('messages-container');
-        messagesContainer.innerHTML = '';
         
-        // Sort messages by date (oldest to newest)
+        // Remember scroll position before updating content
+        lastScrollHeight = messagesDiv.scrollHeight;
+        lastScrollTop = messagesDiv.scrollTop;
+        
+        // Clear and rebuild messages
+        messagesContainer.innerHTML = '';
         messages.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
         
-        // Add messages to container
         for (const message of messages) {
             messagesContainer.appendChild(createMessageElement(message));
         }
         
-        // Scroll to bottom to show most recent messages
-        scrollToBottom();
+        // Handle scroll position
+        if (isInitialLoad) {
+            scrollToBottom(true);
+            isInitialLoad = false;
+        } else {
+            scrollToBottom();
+        }
         
         // Update current username
         if (data.currentUsername) {
@@ -186,7 +215,6 @@ function createMessageElement(message) {
     contentWrapper.appendChild(content);
     contentWrapper.appendChild(reactionButton);
     contentWrapper.appendChild(reactionPicker);
-    messageDiv.appendChild(contentWrapper);
     
     // Create reactions container
     const reactionsContainer = document.createElement('div');
@@ -208,7 +236,8 @@ function createMessageElement(message) {
         });
     }
     
-    messageDiv.appendChild(reactionsContainer);
+    contentWrapper.appendChild(reactionsContainer);
+    messageDiv.appendChild(contentWrapper);
     
     // Create message metadata
     const meta = document.createElement('div');
@@ -223,14 +252,6 @@ function createMessageElement(message) {
         timestampSpan.textContent = formatMessageDate(message.createdAt);
     }
     meta.appendChild(timestampSpan);
-    
-    // Add verification status if enabled
-    if (messageVerificationEnabled && message.verified && message.verified.toLowerCase() === 'true') {
-        const verifiedSpan = document.createElement('span');
-        verifiedSpan.className = 'verification-status';
-        verifiedSpan.textContent = '✓';
-        meta.appendChild(verifiedSpan);
-    }
     
     messageDiv.appendChild(meta);
     return messageDiv;
@@ -258,11 +279,35 @@ async function toggleReaction(messageId, emoji) {
         });
         
         if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
+            throw new Error('Failed to toggle reaction');
         }
         
-        // Refresh messages to show updated reactions
-        await loadMessages();
+        // Get the updated message with reactions
+        const updatedMessage = await response.json();
+        
+        // Find and update the message element
+        const messageDiv = document.querySelector(`.message[data-message-id="${messageId}"]`);
+        if (messageDiv) {
+            // Update reactions container
+            const reactionsContainer = messageDiv.querySelector('.reactions-container');
+            reactionsContainer.innerHTML = ''; // Clear existing reactions
+            
+            // Add updated reactions
+            if (updatedMessage.reactions) {
+                Object.entries(updatedMessage.reactions).forEach(([emoji, users]) => {
+                    if (users.length > 0) {
+                        const reaction = document.createElement('div');
+                        reaction.className = 'reaction';
+                        if (users.includes(currentUsername)) {
+                            reaction.className += ' active';
+                        }
+                        reaction.onclick = () => toggleReaction(messageId, emoji);
+                        reaction.innerHTML = `${emoji} <span>${users.length}</span>`;
+                        reactionsContainer.appendChild(reaction);
+                    }
+                });
+            }
+        }
     } catch (error) {
         console.error('Error toggling reaction:', error);
     }

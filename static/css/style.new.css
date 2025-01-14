@@ -55,13 +55,17 @@ body {
     -webkit-font-smoothing: antialiased;
 }
 
-/* Layout */
+/* Container setup for proper scrolling */
 .container {
-    max-width: 1200px;
-    margin: 0 auto;
-    min-height: 100vh;
     display: flex;
     flex-direction: column;
+    height: 100vh;
+    overflow: hidden;
+    position: relative;
+}
+
+.header {
+    flex-shrink: 0;
 }
 
 /* Header */
@@ -150,23 +154,30 @@ body {
     background: rgba(163, 31, 52, 0.05);
 }
 
-/* Messages section */
+/* Messages section - core scrolling setup */
 #messages {
     flex: 1;
-    padding: 1rem;
-    overflow-y: auto;
+    overflow-y: scroll;
+    position: relative;
     display: flex;
     flex-direction: column;
+    padding: 1rem;
     scroll-behavior: smooth;
-    height: 100%; /* Ensure full height */
+    -webkit-overflow-scrolling: touch;
 }
 
 #messages-container {
+    margin-top: auto;
+    width: 100%;
     display: flex;
     flex-direction: column;
-    min-height: min-content;
-    margin-top: auto; /* Push content to bottom */
-    scroll-behavior: smooth;
+    gap: 0.5rem;
+}
+
+#scroll-anchor {
+    float: left;
+    clear: both;
+    width: 100%;
 }
 
 .message {
@@ -302,19 +313,29 @@ body {
 }
 
 .reactions-container {
+    position: absolute;
     display: flex;
-    gap: 4px;
     flex-wrap: wrap;
-    margin-top: 4px;
-    padding: 0 4px;
+    gap: 4px;
+    padding: 4px;
+    border-radius: 12px;
+    background: var(--bg-primary);
+    border: 1px solid var(--message-border);
+    box-shadow: 0 1px 2px var(--message-shadow);
+    max-width: 200px;
+    min-height: 24px;
 }
 
 .message.left .reactions-container {
-    justify-content: flex-start;
+    right: -220px;
+    top: 50%;
+    transform: translateY(-50%);
 }
 
 .message.right .reactions-container {
-    justify-content: flex-end;
+    left: -220px;
+    top: 50%;
+    transform: translateY(-50%);
 }
 
 .reaction {
@@ -398,11 +419,12 @@ body {
 
 /* Message input container */
 .message-input-container {
-    background: var(--bg-secondary);
+    flex-shrink: 0;
     border-top: 1px solid var(--border-color);
+    background: var(--bg-secondary);
     padding: 1rem;
-    position: sticky;
-    bottom: 0;
+    position: relative;
+    z-index: 2;
 }
 
 .message-form {
