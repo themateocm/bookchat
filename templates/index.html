@@ -3,33 +3,33 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>BookChat</title>
-    <link rel="stylesheet" href="/static/css/style.css">
+    <title>MITChat</title>
+    <link rel="stylesheet" href="/static/css/style.new.css">
     <noscript>
         <link rel="stylesheet" href="/static/css/noscript.css">
     </noscript>
     <script src="/static/js/theme.js"></script>
     <script>
-        // Mark page as JavaScript-enabled
         document.documentElement.className = 'js';
     </script>
 </head>
 <body>
     <div class="container">
-        <!-- Header with username -->
-        <div class="header">
-            <!-- No-JS username change form -->
-            <form method="POST" action="/username" class="nojs-only username-control">
-                <input type="text" name="new_username" placeholder="New username" required>
-                <button type="submit">Change Username</button>
-                <span class="current-username">(Current: {{ username }})</span>
-            </form>
-            <!-- JS-only username controls -->
-            <div class="username-control js-only">
-                <button id="change-username-btn">
-                    <span id="username-display"></span>
-                    <span class="username-icon">✎</span>
-                </button>
+        <header class="header">
+            <div class="username-control">
+                <!-- No-JS username change form -->
+                <form method="POST" action="/username" class="nojs-only">
+                    <input type="text" name="new_username" placeholder="New username" required>
+                    <button type="submit">Change Username</button>
+                    <span class="current-username">(Current: {{ username }})</span>
+                </form>
+                <!-- JS-only username controls -->
+                <div class="js-only">
+                    <button id="change-username-btn">
+                        <span id="username-display"></span>
+                        <span class="username-icon">✎</span>
+                    </button>
+                </div>
             </div>
             <div class="nav-links">
                 <a href="/status" class="nav-link">System Status</a>
@@ -37,10 +37,9 @@
                     <span id="theme-toggle-text">🌙</span>
                 </button>
             </div>
-        </div>
+        </header>
 
-        <!-- Messages container -->
-        <div id="messages">
+        <main id="messages">
             <!-- No-JS refresh form -->
             <form method="GET" action="/" class="nojs-only refresh-form">
                 <button type="submit">Refresh Messages</button>
@@ -48,28 +47,20 @@
             <div id="messages-container">
                 <p>Loading messages...</p>
             </div>
-        </div>
+        </main>
 
-        <!-- Message input -->
-        <div class="message-form">
-            <!-- No-JS message form -->
-            <form id="message-form" method="POST" action="/messages" class="message-input-container nojs-only">
-                <textarea name="content" placeholder="Type your message here..." rows="1" required></textarea>
-                <button type="submit">Send</button>
+        <footer class="message-input-container">
+            <form id="message-form" class="message-form">
+                <textarea 
+                    id="message-input" 
+                    name="message" 
+                    placeholder="Type a message..." 
+                    required
+                ></textarea>
+                <button type="submit" class="send-button">Send</button>
             </form>
-            <!-- JS message form -->
-            <form id="js-message-form" class="message-input-container js-only">
-                <textarea id="message-input" placeholder="Type your message here..." rows="1" required></textarea>
-                <button type="submit" id="send-button">Send</button>
-            </form>
-        </div>
-
-        <div id="global-verification-status" style="display: none;">
-            Chat Verification Status: All Messages Verified
-        </div>
+        </footer>
     </div>
-
-    <!-- Load JavaScript last -->
     <script src="/static/js/main.js"></script>
 </body>
 </html>
