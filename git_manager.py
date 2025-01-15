@@ -690,7 +690,7 @@ class GitManager:
         """
         try:
             result = subprocess.run(
-                ['git', 'rev-parse', '--short=7', 'HEAD', '--', filepath],
+                ['git', 'log', '-1', '--format=%h', '--', filepath],
                 cwd=str(self.repo_path),
                 capture_output=True,
                 text=True,
