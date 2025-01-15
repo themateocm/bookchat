@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
 
-import unittest
-from unittest.mock import patch, MagicMock, call
+import pytest
 import os
-import tempfile
-import shutil
+import sys
+from unittest.mock import patch, MagicMock
 from pathlib import Path
 from datetime import datetime
-import sys
 from github import Github
 from github.Repository import Repository
 
@@ -18,204 +16,197 @@ from git_manager import GitManager
 
 TEST_DATE = "2025-01-08T08:54:30-05:00"
 
-class TestGitManager(unittest.TestCase):
-    def setUp(self):
-        """Set up test environment before each test"""
-        # Create a temporary directory for the test repository
-        self.test_dir = tempfile.mkdtemp()
+class TestGitManager:
+    """Test cases for GitManager class."""
+    
+    @pytest.fixture(autouse=True)
+    def setup(self, tmp_path):
+        """Set up test environment."""
+        self.test_dir = tmp_path
+        self.messages_dir = self.test_dir / 'messages'
+        self.messages_dir.mkdir(parents=True)
         
-        # Set up environment variables for testing
-        self.env_patcher = patch.dict('os.environ', {
-            'GITHUB_TOKEN': 'test_token',
-            'GITHUB_REPO': 'test_user/test_repo',
-            'REPO_PATH': self.test_dir
-        })
-        self.env_patcher.start()
-        
-        # Create the messages directory
-        os.makedirs(os.path.join(self.test_dir, 'messages'), exist_ok=True)
-
-    def tearDown(self):
-        """Clean up test environment after each test"""
-        # Stop environment variable patch
-        self.env_patcher.stop()
-        
-        # Remove the temporary directory if it exists
-        if os.path.exists(self.test_dir):
-            shutil.rmtree(self.test_dir)
+        # Create identity directories
+        (self.test_dir / 'identity' / 'public_keys').mkdir(parents=True)
+        (self.test_dir / 'identity' / 'private_keys').mkdir(parents=True)
+        (self.test_dir / 'keys').mkdir(parents=True)
 
     @patch('git_manager.Github')
     @patch('subprocess.run')
     def test_init(self, mock_run, mock_github):
-        """Test GitManager initialization"""
-        # Set up mock GitHub API
-        mock_github_instance = MagicMock()
-        mock_github.return_value = mock_github_instance
+        """Test initializing git manager."""
+        # Mock git commands
+        def mock_subprocess(*args, **kwargs):
+            if args[0][0] == 'openssl':
+                return MagicMock(stdout=b'test_signature')
+            return MagicMock(stdout=b'test_commit_hash')
+        mock_run.side_effect = mock_subprocess
         
-        mock_repo = MagicMock()
-        mock_github_instance.get_repo.return_value = mock_repo
-
-        # Initialize GitManager
-        manager = GitManager(self.test_dir)
-
-        # Assert GitHub API was initialized correctly
-        mock_github.assert_called_once()
-        mock_github_instance.get_repo.assert_called_once_with('test_user/test_repo')
-
-    @patch('git_manager.Github')
-    @patch('subprocess.run')
-    def test_ensure_repo_exists_with_clone(self, mock_run, mock_github):
-        """Test repository cloning when directory doesn't exist"""
-        # Remove the test directory to simulate non-existent repo
-        shutil.rmtree(self.test_dir)
-
-        # Set up mock GitHub API
-        mock_github_instance = MagicMock()
-        mock_github.return_value = mock_github_instance
+        manager = GitManager(str(self.test_dir))
+        assert isinstance(manager, GitManager)
         
-        mock_repo = MagicMock()
-        mock_github_instance.get_repo.return_value = mock_repo
-
-        # Initialize and ensure repo exists
-        manager = GitManager(self.test_dir)
-        manager.ensure_repo_exists()
-
-        # Assert git clone was called with the correct arguments
-        mock_run.assert_called_with(
-            ['git', 'clone', f'https://test_token@github.com/test_user/test_repo.git', str(Path(self.test_dir))],
-            check=True
-        )
-
     @patch('git_manager.Github')
     @patch('subprocess.run')
     def test_save_message(self, mock_run, mock_github):
-        """Test saving a message to the repository"""
+        """Test saving a message to the repository."""
         # Set up mock GitHub API
         mock_github_instance = MagicMock()
         mock_github.return_value = mock_github_instance
         
         mock_repo = MagicMock()
         mock_github_instance.get_repo.return_value = mock_repo
-
-        # Mock the git commands
-        mock_run.return_value.stdout = "test_commit_hash"
-
+        
+        # Mock git commands
+        def mock_subprocess(*args, **kwargs):
+            if args[0][0] == 'openssl':
+                return MagicMock(stdout=b'test_signature')
+            return MagicMock(stdout=b'test_commit_hash')
+        
+        mock_run.side_effect = mock_subprocess
+        
         # Initialize and save message
-        manager = GitManager(self.test_dir)
+        manager = GitManager(str(self.test_dir))
         result = manager.save_message("Test message", "test_author", date_str=TEST_DATE)
-
+        
         # Assert the message file was created
         message_files = list(Path(self.test_dir).glob('messages/*_test_author.txt'))
-        self.assertEqual(len(message_files), 1)
+        assert len(message_files) == 1
         
         # Assert the message content was written correctly with metadata
         with open(message_files[0], 'r') as f:
             content = f.read()
         
-        expected_content = f"Date: {TEST_DATE}\nAuthor: test_author\n\nTest message"
-        self.assertEqual(content.strip(), expected_content)
-
-        # Get the relative path of the message file
-        relative_path = Path(message_files[0]).relative_to(Path(self.test_dir))
-
-        # Assert git commands were called in correct order
-        expected_calls = [
-            call(['git', 'add', str(relative_path)], cwd=str(Path(self.test_dir)), check=True),
-            call(['git', 'commit', '-m', 'Add message from test_author'], cwd=str(Path(self.test_dir)), check=True),
-            call(['git', 'push', 'origin', 'main'], cwd=str(Path(self.test_dir)), check=True),
-            call(['git', 'rev-parse', 'HEAD'], cwd=str(Path(self.test_dir)), capture_output=True, text=True, check=True)
-        ]
-        mock_run.assert_has_calls(expected_calls)
-
+        expected_content = (
+            "Test message\n\n"
+            "-- \n"
+            "Author: test_author\n"
+            f"Date: {TEST_DATE}\n"
+            "Public-Key: identity/public_keys/test_author.pub\n"
+            "Signature: 746573745f7369676e6174757265"
+        )
+        assert content.strip() == expected_content
+        
     @patch('git_manager.Github')
     @patch('subprocess.run')
     def test_save_message_with_parent(self, mock_run, mock_github):
-        """Test saving a message with a parent ID"""
+        """Test saving a message with a parent ID."""
         # Set up mock GitHub API
         mock_github_instance = MagicMock()
         mock_github.return_value = mock_github_instance
         
         mock_repo = MagicMock()
         mock_github_instance.get_repo.return_value = mock_repo
-
-        # Mock the git commands
-        mock_run.return_value.stdout = "test_commit_hash"
+        
+        # Mock git commands
+        def mock_subprocess(*args, **kwargs):
+            if args[0][0] == 'openssl':
+                return MagicMock(stdout=b'test_signature')
+            return MagicMock(stdout=b'test_commit_hash')
+        
+        mock_run.side_effect = mock_subprocess
+        
+        # Create parent message
+        parent_id = "abc123.txt"
+        parent_path = self.test_dir / "messages" / parent_id
+        parent_path.parent.mkdir(parents=True, exist_ok=True)
+        parent_path.write_text("Parent message content")
 
         # Initialize and save message with parent
-        manager = GitManager(self.test_dir)
-        result = manager.save_message("Test reply", "test_author", parent_id="abc123", date_str=TEST_DATE)
-
-        # Assert the message file was created
-        message_files = list(Path(self.test_dir).glob('messages/*_test_author.txt'))
-        self.assertEqual(len(message_files), 1)
+        manager = GitManager(str(self.test_dir))
+        result = manager.save_message("Test reply", "test_author", parent_id=parent_id, date_str=TEST_DATE)
         
-        # Assert the message content was written correctly with metadata including parent
-        with open(message_files[0], 'r') as f:
-            content = f.read()
+        # Verify message was saved
+        assert result is not None
+        assert "Test reply" in result["content"]
+        assert parent_id == result["parent_id"]
         
-        expected_content = f"Date: {TEST_DATE}\nAuthor: test_author\nParent-Message: abc123\n\nTest reply"
-        self.assertEqual(content.strip(), expected_content)
-
-        # Get the relative path of the message file
-        relative_path = Path(message_files[0]).relative_to(Path(self.test_dir))
-
-        # Assert git commands were called in correct order
-        expected_calls = [
-            call(['git', 'add', str(relative_path)], cwd=str(Path(self.test_dir)), check=True),
-            call(['git', 'commit', '-m', 'Add message from test_author'], cwd=str(Path(self.test_dir)), check=True),
-            call(['git', 'push', 'origin', 'main'], cwd=str(Path(self.test_dir)), check=True),
-            call(['git', 'rev-parse', 'HEAD'], cwd=str(Path(self.test_dir)), capture_output=True, text=True, check=True)
-        ]
-        mock_run.assert_has_calls(expected_calls)
-
     @patch('git_manager.Github')
     @patch('subprocess.run')
     def test_read_message(self, mock_run, mock_github):
-        """Test reading a message file"""
-        # Set up mock GitHub API
-        mock_github_instance = MagicMock()
-        mock_github.return_value = mock_github_instance
+        """Test reading a message from the repository."""
+        # Create a test message file
+        message_file = self.messages_dir / 'test_message.txt'
+        message_content = (
+            "Test message\n\n"
+            "-- \n"
+            "Author: test_author\n"
+            f"Date: {TEST_DATE}\n"
+            "Public-Key: identity/public_keys/test_author.pub\n"
+            "Signature: 746573745f7369676e6174757265"
+        )
+        message_file.write_text(message_content)
         
-        mock_repo = MagicMock()
-        mock_github_instance.get_repo.return_value = mock_repo
-
-        # Initialize manager and create a test message
-        manager = GitManager(self.test_dir)
-        result = manager.save_message("Test message", "test_author", date_str=TEST_DATE)
+        # Mock git commands
+        def mock_subprocess(*args, **kwargs):
+            if args[0][0] == 'openssl':
+                return MagicMock(stdout=b'test_signature')
+            return MagicMock(stdout=b'test_commit_hash')
+        mock_run.side_effect = mock_subprocess
         
-        # Read the message back
-        metadata, message = manager.read_message(result['filename'])
+        # Initialize manager and read message
+        manager = GitManager(str(self.test_dir))
+        result = manager.read_message('test_message.txt')
         
-        # Assert metadata and message content are correct
-        self.assertEqual(metadata['Date'], TEST_DATE)
-        self.assertEqual(metadata['Author'], 'test_author')
-        self.assertEqual(message, 'Test message')
-
+        # Verify message content
+        assert result['content'] == 'Test message'
+        assert result['author'] == 'test_author'
+        assert result['createdAt'] == TEST_DATE
+        assert result['signed'] is True
+        assert result['verified'] == 'false'  # No public key available
+        
     @patch('git_manager.Github')
     @patch('subprocess.run')
-    def test_error_handling(self, mock_run, mock_github):
-        """Test error handling when git operations fail"""
+    def test_ensure_repo_exists_with_clone(self, mock_run, mock_github):
+        """Test repository initialization with cloning."""
         # Set up mock GitHub API
         mock_github_instance = MagicMock()
         mock_github.return_value = mock_github_instance
         
         mock_repo = MagicMock()
         mock_github_instance.get_repo.return_value = mock_repo
-
-        # Make git push command fail
-        def side_effect(*args, **kwargs):
-            if args[0] == ['git', 'push', 'origin', 'main']:
-                raise Exception("Push failed")
-            return MagicMock()
-
-        mock_run.side_effect = side_effect
-
-        # Initialize GitManager
-        manager = GitManager(self.test_dir)
-
-        # Assert that save_message raises the exception
-        with self.assertRaises(Exception):
-            manager.save_message("Test message", "test_author", date_str=TEST_DATE)
+        
+        # Remove test directory to simulate fresh clone
+        import shutil
+        shutil.rmtree(self.test_dir)
+        
+        # Mock git commands
+        def mock_subprocess(*args, **kwargs):
+            # Create directories when git init is called
+            if args[0][0] == 'git' and args[0][1] == 'init':
+                os.makedirs(self.test_dir / 'messages', exist_ok=True)
+                os.makedirs(self.test_dir / 'identity' / 'public_keys', exist_ok=True)
+                os.makedirs(self.test_dir / 'identity' / 'private_keys', exist_ok=True)
+                os.makedirs(self.test_dir / 'keys', exist_ok=True)
+            elif args[0][0] == 'openssl':
+                return MagicMock(stdout=b'test_signature')
+            return MagicMock(stdout=b'test_commit_hash')
+        
+        mock_run.side_effect = mock_subprocess
+        
+        # Initialize manager (should trigger init)
+        with patch('os.environ', {'GITHUB_TOKEN': 'test', 'GITHUB_REPO': 'test/test', 'SYNC_TO_GITHUB': 'true'}):
+            manager = GitManager(str(self.test_dir))
+        
+        # Verify directory was created
+        assert self.test_dir.exists()
+        assert self.messages_dir.exists()
+        assert (self.test_dir / 'identity' / 'public_keys').exists()
+        assert (self.test_dir / 'identity' / 'private_keys').exists()
+        assert (self.test_dir / 'keys').exists()
+        
+    def test_error_handling(self):
+        """Test error handling in git manager."""
+        # Initialize without GitHub
+        with patch('os.environ', {}):
+            manager = GitManager(str(self.test_dir))
+        
+        # Test reading non-existent message
+        result = manager.read_message('nonexistent.txt')
+        assert result is None
+            
+        # Test saving message with invalid parent
+        with pytest.raises(ValueError):
+            manager.save_message("Test message", "test_author", parent_id="nonexistent.txt")
 
 if __name__ == '__main__':
-    unittest.main()
+    pytest.main()

@@ -4,7 +4,7 @@ import http.server
 import socketserver
 import json
 import os
-import pathlib
+from pathlib import Path
 import logging
 import traceback
 import re
@@ -12,12 +12,12 @@ from datetime import datetime
 from urllib.parse import parse_qs, urlparse
 from http import HTTPStatus
 from dotenv import load_dotenv
-from storage.factory import create_storage
-from pathlib import Path
 import threading
 import time
 import subprocess
 from jinja2 import Environment, FileSystemLoader
+
+from storage.file_storage import FileStorage
 
 # Configure logging with a more detailed format and multiple levels
 log_format = '%(asctime)s - %(name)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s'
@@ -50,15 +50,6 @@ console_handler = logging.StreamHandler()
 console_handler.setLevel(logging.ERROR)  # Only show ERROR level messages in console
 console_handler.setFormatter(logging.Formatter(console_format))
 
-# Create git logger with special handling
-git_logger = logging.getLogger('git')
-git_logger.setLevel(logging.INFO)  # Set to INFO to ignore DEBUG messages
-git_handler = logging.FileHandler('logs/git.log')
-git_handler.setLevel(logging.INFO)
-git_handler.setFormatter(logging.Formatter(log_format))
-git_logger.addHandler(git_handler)
-git_logger.propagate = False  # Don't propagate to root logger
-
 # Add all handlers to root logger
 root.addHandler(debug_handler)
 root.addHandler(info_handler)
@@ -70,11 +61,6 @@ root.setLevel(logging.DEBUG)
 
 # Create a logger specific to this application
 logger = logging.getLogger('bookchat')
-
-# Log initial debug state
-logger.info(f"Console logging level: {logging.getLevelName(console_handler.level)}")
-if console_handler.level == logging.DEBUG:
-    logger.info("Debug logging enabled via BOOKCHAT_DEBUG environment variable")
 
 # Load environment variables
 load_dotenv()
@@ -88,67 +74,46 @@ REPO_PATH = os.getenv('REPO_PATH', os.path.abspath(os.path.dirname(__file__)))
 
 # Initialize storage backend
 logger.info(f"Initializing storage backend with repo path: {REPO_PATH}")
-storage = create_storage(storage_type='git', repo_path=REPO_PATH)
-
-# Log all loggers and their levels
-logger.debug("Current logger levels:")
-for name in logging.root.manager.loggerDict:
-    log = logging.getLogger(name)
-    logger.debug(f"Logger {name}: level={logging.getLevelName(log.level)}, handlers={log.handlers}, propagate={log.propagate}")
-
+storage = FileStorage(REPO_PATH)
 storage.init_storage()
 
 class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
     """Custom request handler for the chat application"""
-
+    
     def __init__(self, *args, **kwargs):
-        # Initialize storage
-        global storage
-        if storage is None:
-            storage = GitStorage('.')
-            storage.key_manager = KeyManager(
-                keys_dir='keys',
-                public_keys_dir='identity/public_keys'
-            )
         # Set up Jinja2 environment
         self.jinja_env = Environment(loader=FileSystemLoader('templates'))
         # Set the directory for serving static files
-        logger.debug("Initializing ChatRequestHandler")
         super().__init__(*args, directory="static", **kwargs)
-
-    def handle_error(self, error):
-        """Handle errors and return appropriate response
-        
-        This method provides centralized error handling for the server by:
-        1. Logging the error with full traceback
-        2. Handling broken pipe errors gracefully
-        3. Sending a JSON error response to the client
-        """
-        # Log the error with full stack trace for debugging
-        error_msg = f"Error occurred: {str(error)}"
-        logger.error(error_msg, exc_info=True)  # Include full stack trace
-        
-        # Special case: BrokenPipeError occurs when client disconnects prematurely
-        # In this case, we can't send a response, so just log and return
-        if isinstance(error, BrokenPipeError):
-            logger.info("Client disconnected prematurely - suppressing broken pipe error")
-            return
-            
+    
+    def handle_error(self, status_code: int, message: str) -> None:
+        """Handle errors and return appropriate response."""
         try:
-            # Prepare JSON error response with error details and stack trace
-            error_response = {
-                'error': str(error),
-                'traceback': traceback.format_exc()
-            }
-            # Send 500 Internal Server Error response
-            self.send_response(HTTPStatus.INTERNAL_SERVER_ERROR)
+            # Log error with traceback
+            logger.error(f"Error {status_code}: {message}\n{traceback.format_exc()}")
+            
+            # Don't send error response for broken pipe or connection reset
+            if isinstance(message, (BrokenPipeError, ConnectionResetError)):
+                logger.debug(f"Client disconnected: {message}")
+                return
+            
+            # Send error response
+            self.send_response(status_code)
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
+            
+            error_response = {
+                'error': {
+                    'code': status_code,
+                    'message': str(message)
+                }
+            }
             self.wfile.write(json.dumps(error_response).encode('utf-8'))
-        except (BrokenPipeError, ConnectionResetError) as e:
-            # Handle case where connection is lost while trying to send error response
-            logger.info(f"Failed to send error response due to connection issue: {e}")
-
+            
+        except Exception as e:
+            # Last resort error handling
+            logger.error(f"Error in error handler: {e}")
+    
     def do_GET(self):
         """Handle GET requests for various endpoints including static files, messages, and public keys"""
         try:
@@ -158,111 +123,106 @@ class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
             client_address = self.client_address[0]
             logger.info(f"GET request from {client_address} to {path}")
             
-            # #todo: Add rate limiting for requests from same IP
-            # #todo: Add request validation/sanitization layer
-            try:
-                # Main application routes
-                if path == '/':
-                    # #todo: Consider caching the index.html for better performance
-                    logger.debug("Serving main page")
-                    self.serve_file('templates/index.html', 'text/html')
-                elif path == '/messages':
-                    # #todo: Add pagination support for messages
-                    logger.debug("Handling messages request")
-                    self.serve_messages()
-                elif path == '/verify_username':
-                    # #todo: Add more robust username validation rules
-                    logger.debug("Handling username verification")
-                    self.verify_username()
-                elif path == '/status':
-                    # #todo: Add caching for status page with configurable TTL
-                    self.serve_status_page()
-                    
-                # Public key handling
-                elif path.startswith('/public_key/'):
-                    # #todo: Add key expiration checking
-                    key_name = path.split('/')[-1]
-                    key_path = Path('identity/public_keys') / key_name
-                    if key_path.exists() and key_path.suffix == '.pub':
-                        self.serve_file(key_path, 'text/plain')
-                    else:
-                        self.send_error(HTTPStatus.NOT_FOUND)
-                        
-                # Individual message handling
-                elif path.startswith('/messages/'):
-                    # #todo: Add message access control
-                    filename = path.split('/')[-1]
-                    message_path = Path('messages') / filename
-                    if message_path.exists() and message_path.is_file():
-                        self.send_response(HTTPStatus.OK)
-                        self.send_header('Content-Type', 'text/plain')
-                        self.end_headers()
-                        self.wfile.write(message_path.read_bytes())
-                    else:
-                        self.send_error(HTTPStatus.NOT_FOUND, "Message file not found")
-                        
-                # Static file handling
-                elif path.startswith('/static/'):
-                    try:
-                        file_path = path[8:]  # Remove '/static/' prefix
-                        logger.debug(f"Serving static file: {file_path}")
-                        with open(os.path.join('static', file_path), 'rb') as f:
-                            content = f.read()
-                        
-                        self.send_response(HTTPStatus.OK)
-                        # Basic content type detection
-                        content_type = 'text/css' if file_path.endswith('.css') else 'application/javascript'
-                        self.send_header('Content-Type', content_type)
-                        self.send_header('Content-Length', str(len(content)))
-                        
-                        # Add caching headers
-                        # Cache static assets for 1 week (604800 seconds)
-                        self.send_header('Cache-Control', 'public, max-age=604800, immutable')
-                        # Provide ETag for cache validation
-                        etag = f'"{hash(content)}"'
-                        self.send_header('ETag', etag)
-                        # Add Vary header to handle different encodings
-                        self.send_header('Vary', 'Accept-Encoding')
-                        
-                        self.end_headers()
-                        self.wfile.write(content)
-                        logger.debug(f"Successfully served static file: {file_path}")
-                    except FileNotFoundError:
-                        logger.error(f"Static file not found: {file_path}")
-                        self.send_error(HTTPStatus.NOT_FOUND)
-                    except Exception as e:
-                        logger.error(f"Error serving file {file_path}: {e}")
-                        self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR)
-                        
-                # Public keys directory handling
-                elif path.startswith('/identity/public_keys/'):
-                    # #todo: Add security headers for key downloads
-                    username = path.split('/')[-1].split('.')[0]
-                    public_key_path = os.path.join(REPO_PATH, 'identity/public_keys', f'{username}.pub')
-                    if os.path.exists(public_key_path):
-                        self.send_response(HTTPStatus.OK)
-                        self.send_header('Content-Type', 'text/plain')
-                        self.end_headers()
-                        with open(public_key_path, 'r') as f:
-                            self.wfile.write(f.read().encode('utf-8'))
-                    else:
-                        self.send_error(HTTPStatus.NOT_FOUND, "Public key not found")
-                        
-                # Fallback to default handler
+            # Main application routes
+            if path == '/':
+                # Serve main page
+                logger.debug("Serving main page")
+                self.serve_file('templates/index.html', 'text/html')
+            elif path == '/messages':
+                # Serve messages
+                logger.debug("Handling messages request")
+                self.serve_messages()
+            elif path == '/verify_username':
+                # Verify username
+                logger.debug("Handling username verification")
+                self.verify_username()
+            elif path == '/status':
+                # Serve status page
+                self.serve_status_page()
+                
+            # Public key handling
+            elif path.startswith('/public_keys/'):
+                # Serve public key
+                key_name = path.split('/')[-1]
+                key_path = Path('public_keys') / key_name
+                if key_path.exists() and key_path.suffix == '.pub':
+                    self.serve_file(str(key_path), 'text/plain')
                 else:
-                    # #todo: Add custom 404 page
-                    logger.info(f"Attempting to serve unknown path: {path}")
-                    super().do_GET()
+                    self.send_error(HTTPStatus.NOT_FOUND)
                     
-            except (BrokenPipeError, ConnectionResetError) as e:
-                # Common client disconnect scenarios - log but don't treat as error
-                logger.info(f"Client disconnected during response: {e}")
-            except Exception as e:
-                logger.error(f"Error in GET request handler", exc_info=True)
-                self.handle_error(e)
+            # Individual message handling
+            elif path.startswith('/messages/'):
+                # Serve individual message
+                filename = path.split('/')[-1]
+                message_path = Path('messages') / filename
+                if message_path.exists() and message_path.is_file():
+                    self.send_response(HTTPStatus.OK)
+                    self.send_header('Content-Type', 'text/plain')
+                    self.end_headers()
+                    self.wfile.write(message_path.read_bytes())
+                else:
+                    self.send_error(HTTPStatus.NOT_FOUND, "Message file not found")
+                    
+            # Static file handling
+            elif path.startswith('/static/'):
+                # Serve static file
+                try:
+                    file_path = path[8:]  # Remove '/static/' prefix
+                    logger.debug(f"Serving static file: {file_path}")
+                    with open(os.path.join('static', file_path), 'rb') as f:
+                        content = f.read()
+                    
+                    self.send_response(HTTPStatus.OK)
+                    # Basic content type detection
+                    content_type = 'text/css' if file_path.endswith('.css') else 'application/javascript'
+                    self.send_header('Content-Type', content_type)
+                    self.send_header('Content-Length', str(len(content)))
+                    
+                    # Add caching headers
+                    # Cache static assets for 1 week (604800 seconds)
+                    self.send_header('Cache-Control', 'public, max-age=604800, immutable')
+                    # Provide ETag for cache validation
+                    etag = f'"{hash(content)}"'
+                    self.send_header('ETag', etag)
+                    # Add Vary header to handle different encodings
+                    self.send_header('Vary', 'Accept-Encoding')
+                    
+                    self.end_headers()
+                    self.wfile.write(content)
+                    logger.debug(f"Successfully served static file: {file_path}")
+                except FileNotFoundError:
+                    logger.error(f"Static file not found: {file_path}")
+                    self.send_error(HTTPStatus.NOT_FOUND)
+                except Exception as e:
+                    logger.error(f"Error serving file {file_path}: {e}")
+                    self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR)
+                    
+            # Public keys directory handling
+            elif path.startswith('/identity/public_keys/'):
+                # Serve public key from identity directory
+                username = path.split('/')[-1].split('.')[0]
+                public_key_path = os.path.join(REPO_PATH, 'identity/public_keys', f'{username}.pub')
+                if os.path.exists(public_key_path):
+                    self.send_response(HTTPStatus.OK)
+                    self.send_header('Content-Type', 'text/plain')
+                    self.end_headers()
+                    with open(public_key_path, 'r') as f:
+                        self.wfile.write(f.read().encode('utf-8'))
+                else:
+                    self.send_error(HTTPStatus.NOT_FOUND, "Public key not found")
+                    
+            # Fallback to default handler
+            else:
+                # Attempt to serve unknown path
+                logger.info(f"Attempting to serve unknown path: {path}")
+                super().do_GET()
+                
+        except (BrokenPipeError, ConnectionResetError) as e:
+            # Common client disconnect scenarios - log but don't treat as error
+            logger.info(f"Client disconnected during response: {e}")
         except Exception as e:
-            logger.error(f"Error parsing request", exc_info=True)
-            self.handle_error(e)
+            logger.error(f"Error in GET request handler", exc_info=True)
+            self.handle_error(500, str(e))
 
     def do_POST(self):
         """Handle POST requests"""
@@ -281,90 +241,82 @@ class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
                 self.send_error(HTTPStatus.NOT_FOUND)
         except Exception as e:
             logger.error(f"Error in POST request handler", exc_info=True)
-            self.handle_error(e)
+            self.handle_error(500, str(e))
 
-    def handle_message_post(self):
+    def handle_message_post(self) -> None:
         """Handle message posting"""
         try:
-            # Get content length
+            # Read and parse request body
             content_length = int(self.headers.get('Content-Length', 0))
-            logger.debug(f"Content length: {content_length}")
+            logger.debug(f"Content-Length: {content_length}")
+            logger.debug(f"Content-Type: {self.headers.get('Content-Type', '')}")
             
-            # Read the body as plaintext
-            content = self.rfile.read(content_length).decode('utf-8')
-            logger.debug(f"Received message body: {content[:200]}...")  # Log first 200 chars to avoid huge logs
+            if content_length == 0:
+                logger.error("No content received in request")
+                self.handle_error(400, "No content received")
+                return
             
-            # Get username from cookie if available
-            cookies = {}
-            if 'Cookie' in self.headers:
-                for cookie in self.headers['Cookie'].split(';'):
-                    name, value = cookie.strip().split('=', 1)
-                    cookies[name] = value
+            body = self.rfile.read(content_length).decode('utf-8')
+            logger.debug(f"Raw request body: {body}")
             
-            # Get author from cookie
-            author = cookies.get('username', 'anonymous')
-            logger.info(f"Processing message from {author}: {content}")
-            
-            # Check if user has a key pair
-            has_key = storage.key_manager.has_key_pair(author)
-            logger.debug(f"Author {author} has key pair: {has_key}")
-            
-            # Save the message
-            logger.debug("Attempting to save message...")
-            try:
-                success = storage.save_message(
-                    author, 
-                    content, 
-                    datetime.now(),
-                    sign=has_key  # Only sign if user has a key pair
-                )
-                logger.info(f"Message save {'successful' if success else 'failed'} with signing={has_key}")
-
-                # Start git operations in a background thread if save was successful
-                if success:
-                    def git_ops():
-                        try:
-                            # Get the latest message file (the one we just saved)
-                            latest_message = max(storage.messages_dir.glob('*.txt'), key=os.path.getctime)
-                            try:
-                                storage.git_manager.add_and_commit_file(
-                                    str(latest_message),
-                                    f"Add message from {author}"
-                                )
-                                storage.git_manager.push()
-                                logger.debug(f"Git operations completed successfully for {latest_message}")
-                            except Exception as e:
-                                logger.debug(f"Git operations completed with non-critical error: {e}")
-                        except Exception as e:
-                            logger.error(f"Failed to process git operations: {e}")
-                    
-                    threading.Thread(target=git_ops, daemon=True).start()
-                    
-            except Exception as e:
-                logger.error(f"Exception while saving message: {e}\n{traceback.format_exc()}")
-                success = False
-        
-            if success:
-                # Get the latest messages to return the new message
-                messages = storage.get_messages(limit=1)
-                new_message = messages[0] if messages else None
-                logger.info(f"Retrieved new message: {new_message}")
-                
-                # Return response
+            # Handle both JSON and form data
+            content_type = self.headers.get('Content-Type', '')
+            if 'application/json' in content_type:
                 try:
-                    self.send_response(HTTPStatus.OK)
-                    self.send_header('Content-Type', 'application/json')
-                    self.end_headers()
-                    self.wfile.write(json.dumps(new_message).encode('utf-8'))
-                except BrokenPipeError:
-                    # Client disconnected, log it but don't treat as error
-                    logger.info("Client disconnected before response could be sent")
+                    data = json.loads(body)
+                    logger.debug(f"Parsed JSON data: {data}")
+                    content = data.get('content')
+                    username = data.get('username', 'anonymous')
+                except json.JSONDecodeError as e:
+                    logger.error(f"Error decoding JSON: {e}")
+                    self.handle_error(400, "Invalid JSON format")
                     return
             else:
-                self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Failed to save message")
+                # Parse form data
+                form_data = parse_qs(body)
+                logger.debug(f"Parsed form data: {form_data}")
+                content = form_data.get('content', [''])[0]
+                username = form_data.get('username', ['anonymous'])[0]
+            
+            # Validate content after parsing
+            if content is None:
+                logger.error("Message content is None")
+                self.handle_error(400, "Message content is required")
+                return
+            
+            content = content.strip()
+            if not content:
+                logger.error("Message content is empty after stripping")
+                self.handle_error(400, "Message content cannot be empty")
+                return
+
+            logger.debug(f"Processed content: {content!r}")
+            logger.debug(f"Processed username: {username!r}")
+
+            # Save message
+            timestamp = datetime.now()
+            if storage.save_message(username, content, timestamp):
+                response = {
+                    'success': True,
+                    'message': 'Message saved successfully',
+                    'data': {
+                        'content': content,
+                        'author': username,
+                        'createdAt': timestamp.astimezone().isoformat(),
+                        'verified': 'true',
+                        'type': 'message'
+                    }
+                }
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps(response).encode('utf-8'))
+            else:
+                self.handle_error(500, "Failed to save message")
+            
         except Exception as e:
-            logger.error(f"Error in message post handler", exc_info=True)
-            self.handle_error(e)
+            logger.error(f"Error handling message post: {e}")
+            self.handle_error(500, str(e))
 
     def handle_username_post(self):
         """Handle username change request"""
@@ -384,7 +336,17 @@ class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
                     'new_username': new_username,
                     'type': 'username_change'
                 })
-                storage.save_message('system', content, datetime.now())
+                if storage.save_message('system', content, datetime.now()):
+                    response = {
+                        'success': True,
+                        'message': 'Username changed successfully'
+                    }
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(json.dumps(response).encode('utf-8'))
+                else:
+                    self.handle_error(500, "Failed to save username change message")
             
             # Redirect back to home page
             self.send_response(HTTPStatus.FOUND)
@@ -392,39 +354,33 @@ class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
             self.end_headers()
         except Exception as e:
             logger.error(f"Error in username change request", exc_info=True)
-            self.handle_error(e)
+            self.handle_error(500, str(e))
 
     def handle_username_change(self):
         """Handle username change request"""
         try:
-            content_length = int(self.headers.get('Content-Length', 0))
-            body = self.rfile.read(content_length).decode('utf-8')
-            data = json.loads(body)
+            # Get new username from request
+            data = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+            new_username = data.get('username', '')
             
-            old_username = data.get('old_username')
-            new_username = data.get('new_username')
-            
-            if not old_username or not new_username:
-                self.send_error(HTTPStatus.BAD_REQUEST, "Missing username data")
+            # Verify new username
+            if not storage.verify_username(new_username):
+                self.handle_error(400, "Invalid username format")
                 return
             
-            # Generate new keypair and handle username change
-            success, message = storage.git_manager.handle_username_change(old_username, new_username)
+            # Send success response
+            response = {
+                'success': True,
+                'username': new_username
+            }
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps(response).encode('utf-8'))
             
-            if success:
-                # Set username cookie
-                cookie = f'username={new_username}; Path=/; HttpOnly; SameSite=Strict'
-                
-                self.send_response(HTTPStatus.OK)
-                self.send_header('Content-Type', 'text/plain')
-                self.send_header('Set-Cookie', cookie)
-                self.end_headers()
-                self.wfile.write(message.encode('utf-8'))
-            else:
-                self.send_error(HTTPStatus.BAD_REQUEST, message)
         except Exception as e:
-            logger.error(f"Error in username change request", exc_info=True)
-            self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR, str(e))
+            logger.error(f"Error handling username change: {e}")
+            self.handle_error(500, str(e))
 
     def serve_file(self, filepath, content_type):
         """Helper method to serve a file with specified content type"""
@@ -448,93 +404,49 @@ class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
         try:
             messages = storage.get_messages()
             
-            # Get current username from cookie or public key
-            cookies = {}
-            if 'Cookie' in self.headers:
-                for cookie in self.headers['Cookie'].split(';'):
-                    name, value = cookie.strip().split('=', 1)
-                    cookies[name] = value
-            
-            # If message verification is disabled, mark all messages as verified
-            if not MESSAGE_VERIFICATION_ENABLED:
-                for message in messages:
-                    message['verified'] = 'true'
-                    message['signature'] = None
-            
-            # Include current username in response
             response = {
                 'messages': messages,
-                'currentUsername': cookies.get('username', 'anonymous'),
                 'messageVerificationEnabled': MESSAGE_VERIFICATION_ENABLED
             }
             
-            self.send_response(HTTPStatus.OK)
+            self.send_response(200)
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
             self.wfile.write(json.dumps(response).encode('utf-8'))
+            
         except Exception as e:
             logger.error(f"Error serving messages: {e}")
-            self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR, str(e))
+            self.handle_error(500, str(e))
 
     def verify_username(self):
         """Helper method to verify username"""
         try:
-            # For GET requests, check cookie first, then fall back to keys
-            if self.command == 'GET':
-                # Check for username cookie
-                cookies = {}
-                if 'Cookie' in self.headers:
-                    for cookie in self.headers['Cookie'].split(';'):
-                        name, value = cookie.strip().split('=', 1)
-                        cookies[name] = value
-                
-                username = cookies.get('username', None)
-                if not username:
-                    # Fall back to checking public keys
-                    public_keys_dir = Path(storage.git_manager.repo_path) / 'public_keys'
-                    if public_keys_dir.exists():
-                        key_files = list(public_keys_dir.glob('*.pub'))
-                        if key_files:
-                            latest_key = max(key_files, key=lambda x: x.stat().st_mtime)
-                            username = latest_key.stem
-                        else:
-                            username = 'anonymous'
-                    else:
-                        username = 'anonymous'
+            query = parse_qs(urlparse(self.path).query)
+            username = query.get('username', [''])[0]
 
-                self.send_response(HTTPStatus.OK)
-                self.send_header('Content-Type', 'application/json')
-                self.end_headers()
-                self.wfile.write(json.dumps({
+            # Verify username format
+            if username:
+                is_valid = storage.verify_username(username)
+                response = {
+                    'valid': is_valid,
                     'username': username,
+                    'error': None if is_valid else 'Invalid username format'
+                }
+            else:
+                response = {
                     'valid': True,
+                    'username': 'anonymous',
                     'status': 'verified'
-                }).encode('utf-8'))
-                return
-            # For POST requests, validate the username
-            content_length = int(self.headers.get('Content-Length', 0))
-            body = self.rfile.read(content_length).decode('utf-8')
-            data = json.loads(body)
-            
-            # Get username from request
-            username = data.get('username', '')
-            logger.debug(f"Verifying username: {username}")
-            
-            # Check if username is valid (3-20 characters, alphanumeric and underscores only)
-            is_valid = bool(re.match(r'^[a-zA-Z0-9_]{3,20}$', username))
-            
-            # Send response
-            self.send_response(HTTPStatus.OK)
+                }
+
+            self.send_response(200)
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
-            self.wfile.write(json.dumps({
-                'username': username,
-                'valid': is_valid,
-                'status': 'verified'
-            }).encode('utf-8'))
+            self.wfile.write(json.dumps(response).encode('utf-8'))
+            
         except Exception as e:
             logger.error(f"Error verifying username: {e}")
-            self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR)
+            self.handle_error(500, str(e))
 
     def get_system_status(self):
         """Get current system status information."""
@@ -564,16 +476,12 @@ class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
             latest_commit = "Unknown"
 
         # Get list of public keys
-        public_keys_dir = Path('identity/public_keys')
+        public_keys_dir = Path('public_keys')
         public_keys = [f.name for f in public_keys_dir.glob('*.pub')] if public_keys_dir.exists() else []
 
         # Get message counts
-        current_messages = storage.get_messages()
-        current_message_count = len(current_messages)
-        
-        # Get archive metrics
-        archive_metrics = storage.archiver.get_metrics()
-        archived_message_count = archive_metrics['total_messages_archived']
+        messages = storage.get_messages()
+        current_message_count = len(messages)
 
         return {
             'git_status': git_status,
@@ -584,7 +492,7 @@ class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
             'current_time': '2025-01-13T11:24:24-05:00',  # Using provided timestamp
             'repo_name': os.environ.get('GITHUB_REPO', ''),
             'current_message_count': current_message_count,
-            'archived_message_count': archived_message_count
+            'archived_message_count': 0
         }
 
     def serve_status_page(self):
@@ -600,7 +508,7 @@ class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
             self.wfile.write(content.encode())
         except Exception as e:
             logger.error(f"Error serving status page: {str(e)}")
-            self.handle_error(e)
+            self.handle_error(500, str(e))
 
 def find_available_port(start_port=8000, max_attempts=100):
     """Find an available port starting from start_port"""
@@ -638,18 +546,6 @@ def open_browser(port):
 def main():
     """Start the server."""
     try:
-        # Perform initial archiving using current time
-        current_time = datetime.fromisoformat('2025-01-13T09:58:54-05:00')  # Use provided time
-        archive_path = storage.archive_old_messages(current_time)
-        if archive_path:
-            logger.info(f"Created archive during startup: {archive_path}")
-            metrics = storage.archiver.get_metrics()
-            logger.info(
-                f"Archive metrics: {metrics['total_archives_created']} archives, "
-                f"{metrics['total_messages_archived']} messages, "
-                f"{metrics['total_mb_archived']:.2f}MB"
-            )
-
         # Find available port
         port = find_available_port()
         if not port:

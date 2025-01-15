@@ -5,7 +5,7 @@ A lightweight, Git-backed web-based messaging application that allows users to c
 ## Features
 
 - Simple and intuitive web interface
-- Flexible storage backend (Git or SQLite)
+- Flexible storage backend using Git
 - Git integration for message history
 - Real-time message updates
 - Basic user authentication
@@ -16,7 +16,7 @@ A lightweight, Git-backed web-based messaging application that allows users to c
 ## Tech Stack
 
 - Backend: Python (No frameworks)
-- Storage: Git-based JSON files or SQLite database
+- Storage: Git-based JSON files
 - Frontend: HTML, CSS, JavaScript (Vanilla)
 - Version Control: Git (via GitHub API)
 - Authentication: GitHub OAuth
@@ -38,8 +38,7 @@ bookchat/
 ├── storage/
 │   ├── __init__.py
 │   ├── factory.py
-│   ├── git_storage.py
-│   └── sqlite_storage.py
+│   └── git_storage.py
 ├── server.py
 └── requirements.txt
 ```
@@ -65,14 +64,14 @@ bookchat/
 
 4. Configure storage backend in `.env`:
    ```bash
-   # Choose storage backend: 'git' or 'sqlite'
-   BOOKCHAT_STORAGE=git
-   
-   # For Git storage
-   REPO_PATH=/path/to/your/repo
-   
-   # For SQLite storage
-   DB_PATH=/path/to/database.db
+   # Required settings
+   GITHUB_TOKEN=your_github_token
+   GITHUB_REPO=username/repo
+
+   # Optional settings
+   PORT=8000             # Default: 8000
+   REPO_PATH=/path/to/repo  # Default: current directory
+   SYNC_TO_GITHUB=true   # Default: false
    ```
 
 5. Run the server:
@@ -91,7 +90,7 @@ BookChat supports multiple deployment options:
 - Perfect for small to medium-sized deployments
 
 ### 2. Traditional Server
-- Use either Git or SQLite storage
+- Use Git storage
 - Deploy on any Python-compatible hosting platform
 - Suitable for larger deployments with more control
 

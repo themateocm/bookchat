@@ -6,10 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- Git-based storage system with GitHub integration
+- Message signing and verification
+- Public key management
+- Real-time message updates
+- Basic user authentication
+- GitHub OAuth integration
+- Message history with Git version control
+- Configurable message retention
+- Improved error handling and logging
+
+### Changed
+- Improved message formatting
+- Enhanced security features
+- Better date handling
+- More robust error recovery
+- Cleaner code organization
+
+### Fixed
+- Message timestamp display issues
+- User authentication edge cases
+- File handling race conditions
+- Error handling improvements
 
 ## [1.0.0] - 2025-01-14
 ### Added
-- Advanced multi-backend storage system with Git and SQLite support
+- Advanced multi-backend storage system with Git support
 - Comprehensive logging system with multiple log levels and separate log files
 - Git integration with fork management capabilities
 - Message verification system with environment variable configuration

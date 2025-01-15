@@ -111,7 +111,7 @@ function createMessageElement(message) {
         const verifiedSpan = document.createElement('span');
         verifiedSpan.className = `verification-status ${message.verified && message.verified.toLowerCase() === 'true' ? 'verified' : 'unverified'}`;
         verifiedSpan.title = message.verified && message.verified.toLowerCase() === 'true' ? 'Message signature verified' : 'Message not verified';
-        verifiedSpan.textContent = message.verified && message.verified.toLowerCase() === 'true' ? '&#10003;' : '&#33;';
+        verifiedSpan.innerHTML = message.verified && message.verified.toLowerCase() === 'true' ? '&#10003;' : '&#33;';
         leftSection.appendChild(verifiedSpan);
     }
     
@@ -127,9 +127,37 @@ function createMessageElement(message) {
         timestampSpan.textContent = 'Sending...';
         timestampSpan.title = 'Message is being sent';
     } else {
-        const messageDate = new Date(message.createdAt);
-        timestampSpan.textContent = messageDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        timestampSpan.title = messageDate.toLocaleString();
+        try {
+            // Handle ISO 8601 dates with timezone offset
+            const date = message.createdAt;
+            if (date && date !== "No timestamp") {
+                // Try to parse the date, handling both ISO 8601 and other formats
+                try {
+                    // First try to parse as ISO 8601
+                    const messageDate = new Date(date);
+                    if (!isNaN(messageDate.getTime())) {
+                        const options = { hour: '2-digit', minute: '2-digit' };
+                        timestampSpan.textContent = messageDate.toLocaleTimeString([], options);
+                        timestampSpan.title = messageDate.toLocaleString();
+                    } else {
+                        // If not a valid date, just display the raw string
+                        timestampSpan.textContent = date;
+                        timestampSpan.title = date;
+                    }
+                } catch (error) {
+                    console.error('Error parsing date:', error, date);
+                    timestampSpan.textContent = date;
+                    timestampSpan.title = 'Error parsing date';
+                }
+            } else {
+                timestampSpan.textContent = date || 'Unknown time';
+                timestampSpan.title = date || 'Unknown time';
+            }
+        } catch (error) {
+            console.error('Error formatting date:', error, message.createdAt);
+            timestampSpan.textContent = message.createdAt || 'Invalid date';
+            timestampSpan.title = 'Error parsing date';
+        }
     }
     rightSection.appendChild(timestampSpan);
     
@@ -164,7 +192,8 @@ function createMessageElement(message) {
     // Add message content
     const content = document.createElement('div');
     content.className = 'content';
-    content.textContent = message.content;
+    // Ensure we display the actual message content, not metadata
+    content.textContent = message.content || 'No message content';
     messageDiv.appendChild(content);
     
     return messageDiv;
@@ -172,6 +201,16 @@ function createMessageElement(message) {
 
 async function sendMessage(content, type = 'message') {
     try {
+        // Ensure content is a string and trim it
+        content = String(content || '').trim();
+        console.log('sendMessage called with content:', content, 'Length:', content.length);
+        console.log('Content type:', typeof content);
+        
+        if (!content) {
+            console.error('Empty message content in sendMessage');
+            return;
+        }
+
         // Create a temporary message object
         const tempMessage = {
             content: content,
@@ -190,34 +229,54 @@ async function sendMessage(content, type = 'message') {
         const messagesDiv = document.getElementById('messages');
         messagesDiv.scrollTop = messagesDiv.scrollHeight;
 
-        // Send to server
+        // Create request body and log it
+        const requestBody = {
+            content: content,
+            username: currentUsername
+        };
+        console.log('Request body before stringify:', requestBody);
+        const stringifiedBody = JSON.stringify(requestBody);
+        console.log('Stringified request body:', stringifiedBody);
+        
         const response = await fetch('/messages', {
             method: 'POST',
             headers: {
-                'Content-Type': 'text/plain'
+                'Content-Type': 'application/json'
             },
-            body: content
+            body: stringifiedBody
         });
         
+        // Log response status
+        console.log('Response status:', response.status);
+        
         if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
+            const errorText = await response.text();
+            console.error('Server error response:', errorText);
+            throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`);
         }
         
         const result = await response.json();
         
         // Update the pending message with the real data
         const pendingMessage = document.querySelector(`[data-message-id="${tempMessage.id}"]`);
-        if (pendingMessage) {
-            // Update message ID
-            pendingMessage.dataset.messageId = result.id;
+        if (pendingMessage && result.data) {
+            // Update message ID and data
+            pendingMessage.dataset.messageId = result.data.id || tempMessage.id;
             
             // Update the timestamp
             const timestamp = pendingMessage.querySelector('.timestamp');
-            if (timestamp) {
-                const messageDate = new Date(result.createdAt);
-                timestamp.textContent = messageDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                timestamp.title = messageDate.toLocaleString();
-                timestamp.classList.remove('pending');
+            if (timestamp && result.data.createdAt) {
+                try {
+                    const messageDate = new Date(result.data.createdAt);
+                    const options = { hour: '2-digit', minute: '2-digit' };
+                    timestamp.textContent = messageDate.toLocaleTimeString([], options);
+                    timestamp.title = messageDate.toLocaleString();
+                    timestamp.classList.remove('pending');
+                } catch (error) {
+                    console.error('Error updating timestamp:', error);
+                    timestamp.textContent = 'Unknown time';
+                    timestamp.title = 'Error parsing date';
+                }
             }
             
             // Add verification status if needed
@@ -226,32 +285,16 @@ async function sendMessage(content, type = 'message') {
                 const verificationStatus = document.createElement('span');
                 verificationStatus.className = 'verification-status';
                 
-                if (result.verified && result.verified.toLowerCase() === 'true') {
+                if (result.data.verified && result.data.verified.toLowerCase() === 'true') {
                     verificationStatus.className += ' verified';
                     verificationStatus.title = 'Message verified';
                     verificationStatus.innerHTML = '&#10003;';
-                } else if (result.signature) {
-                    verificationStatus.className += ' pending';
-                    verificationStatus.title = 'Verification pending';
-                    verificationStatus.innerHTML = '&#8943;';
                 } else {
                     verificationStatus.className += ' unverified';
                     verificationStatus.title = 'Message not verified';
                     verificationStatus.innerHTML = '&#33;';
                 }
                 leftSection.insertBefore(verificationStatus, leftSection.firstChild);
-            }
-            
-            // Add source file link if needed
-            if (result.file && messageVerificationEnabled) {
-                const rightSection = pendingMessage.querySelector('.header-right');
-                const sourceLink = document.createElement('a');
-                sourceLink.className = 'source-link';
-                sourceLink.href = `/messages/${result.file.split('/').pop()}`;
-                sourceLink.textContent = '&#128273;';
-                sourceLink.title = 'View message source file';
-                sourceLink.target = '_blank';
-                rightSection.appendChild(sourceLink);
             }
         }
         
@@ -357,47 +400,52 @@ function setupMessageInput() {
     const messageInput = document.getElementById('message-input');
     
     if (messageForm && messageInput) {
+        // Function to validate and send message
+        const validateAndSendMessage = async (content) => {
+            // Ensure content is a string and properly trimmed
+            content = String(content || '').trim();
+            
+            if (!content) {
+                console.log('Empty content detected, preventing submission');
+                messageInput.classList.add('error');
+                setTimeout(() => messageInput.classList.remove('error'), 2000);
+                return false;
+            }
+
+            // Clear input immediately
+            const originalContent = content;
+            messageInput.value = '';
+            
+            try {
+                await sendMessage(originalContent);
+                return true;
+            } catch (error) {
+                console.error('Failed to send message:', error);
+                messageInput.value = originalContent;
+                messageInput.classList.add('error');
+                setTimeout(() => messageInput.classList.remove('error'), 2000);
+                
+                // Show error message to user
+                const errorDiv = document.createElement('div');
+                errorDiv.className = 'error-message';
+                errorDiv.textContent = 'Failed to send message. Please try again.';
+                messageForm.appendChild(errorDiv);
+                setTimeout(() => errorDiv.remove(), 3000);
+                return false;
+            }
+        };
+
         // Handle form submit (for button click)
         messageForm.addEventListener('submit', async (e) => {
             e.preventDefault();
-            const content = messageInput.value.trim();
-            if (content) {
-                // Clear input immediately
-                messageInput.value = '';
-                
-                try {
-                    await sendMessage(content);
-                } catch (error) {
-                    console.error('Failed to send message:', error);
-                    alert('Failed to send message. Please try again.');
-                    // Restore the message if sending failed
-                    messageInput.value = content;
-                }
-            }
+            await validateAndSendMessage(messageInput.value);
         });
         
         // Handle Enter key press (Shift+Enter for new line)
         messageInput.addEventListener('keydown', async (e) => {
-            if (e.key === 'Enter') {
-                if (e.shiftKey) {
-                    // Allow Shift+Enter to create a new line
-                    return;
-                }
+            if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
-                const content = messageInput.value.trim();
-                if (content) {
-                    // Clear input immediately
-                    messageInput.value = '';
-                    
-                    try {
-                        await sendMessage(content);
-                    } catch (error) {
-                        console.error('Failed to send message:', error);
-                        alert('Failed to send message. Please try again.');
-                        // Restore the message if sending failed
-                        messageInput.value = content;
-                    }
-                }
+                await validateAndSendMessage(messageInput.value);
             }
         });
     }

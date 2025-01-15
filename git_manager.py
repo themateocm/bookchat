@@ -363,7 +363,8 @@ class GitManager:
             return {
                 'Author': 'anonymous',
                 'Date': None,
-                'Public-Key': None
+                'Public-Key': None,
+                'Content': parts[0].strip()
             }, parts[0].strip()
             
         message = parts[0].strip()
@@ -374,6 +375,9 @@ class GitManager:
             if ': ' in line:
                 key, value = line.split(': ', 1)
                 metadata[key] = value
+        
+        # Add the actual message content to metadata
+        metadata['Content'] = message
                 
         return metadata, message
 
@@ -413,6 +417,9 @@ class GitManager:
                 # Not JSON, parse as plaintext with footers
                 metadata, message = self.parse_message(content)
                 
+                # Get the actual message content from metadata
+                message = metadata.get('Content', message)
+                
                 # Try to get date in this order:
                 # 1. From metadata Date header
                 # 2. From filename (YYYYMMDD_HHMMSS)
@@ -435,7 +442,9 @@ class GitManager:
                         fname = filename.stem  # Get filename without extension
                         parts = fname.split('_')
                         if len(parts) >= 2:
-                            date = f"{parts[0][:4]}-{parts[0][4:6]}-{parts[0][6:]}T{parts[1][:2]}:{parts[1][2:4]}:{parts[1][4:]}Z"
+                            date_part = parts[0]
+                            time_part = parts[1]
+                            date = f"{date_part[:4]}-{date_part[4:6]}-{date_part[6:]}T{time_part[:2]}:{time_part[2:4]}:{time_part[4:]}Z"
                     except:
                         date = None
                 
@@ -475,7 +484,7 @@ class GitManager:
 
                 return {
                     'id': str(filename),
-                    'content': message,
+                    'content': message,  # Use the actual message content
                     'author': author,
                     'createdAt': date,
                     'parent_id': metadata.get('Parent-Message'),
@@ -575,6 +584,12 @@ class GitManager:
         # Ensure messages directory exists
         self.ensure_repo_exists()
         
+        # Validate parent_id if provided
+        if parent_id:
+            parent_file = self.messages_dir / parent_id
+            if not parent_file.exists():
+                raise ValueError(f"Parent message not found: {parent_id}")
+        
         # Use current time if no date provided
         if date_str is None:
             date_str = datetime.now().isoformat()
@@ -628,7 +643,16 @@ class GitManager:
         if self.use_github:
             self.sync_changes_to_github(filepath, author)
             
-        return filename
+        # Return message info
+        return {
+            'id': filename,
+            'content': message_content,
+            'author': author,
+            'date': date_str,
+            'parent_id': parent_id,
+            'signature': signature,
+            'message_type': message_type
+        }
 
     def add_and_commit_file(self, filepath: str, commit_msg: str, author: str = "BookChat Bot"):
         """Add and commit a specific file."""

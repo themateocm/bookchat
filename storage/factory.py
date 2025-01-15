@@ -1,50 +1,27 @@
-"""Factory module for creating storage backends."""
+"""Factory for creating storage backends."""
 
-import os
 import logging
-from typing import Optional
+import os
 from pathlib import Path
-from storage import StorageBackend
-from storage.git_storage import GitStorage
-from storage.sqlite_storage import SQLiteStorage
+from typing import Any, Dict
+
+from .file_storage import FileStorage
 
 logger = logging.getLogger(__name__)
 
-def create_storage(storage_type: str = None, **kwargs) -> StorageBackend:
-    """Create a storage backend based on configuration.
+def create_storage(**kwargs: Dict[str, Any]) -> FileStorage:
+    """Create and return a storage backend instance.
     
     Args:
-        storage_type: Type of storage backend ('git' or 'sqlite')
-        **kwargs: Additional configuration parameters
-    
+        **kwargs: Additional arguments to pass to the storage backend.
+            - repo_path: Path to the repository
+        
     Returns:
-        StorageBackend instance
-    
-    Raises:
-        ValueError: If storage_type is invalid
+        A FileStorage instance.
     """
     try:
-        logger.info(f"Creating storage backend of type: {storage_type}")
-        logger.debug(f"Storage configuration: {kwargs}")
-        
-        # Use environment variable if storage_type not specified
-        if storage_type is None:
-            storage_type = os.getenv('BOOKCHAT_STORAGE', 'sqlite').lower()
-            logger.info(f"Using storage type from environment: {storage_type}")
-        
-        storage_type = storage_type.lower()
-        
-        if storage_type == 'git':
-            logger.debug("Initializing Git storage backend")
-            return GitStorage(**kwargs)
-        elif storage_type == 'sqlite':
-            logger.debug("Initializing SQLite storage backend")
-            return SQLiteStorage(**kwargs)
-        else:
-            error_msg = f"Invalid storage type: {storage_type}"
-            logger.error(error_msg)
-            raise ValueError(error_msg)
-            
+        repo_path = kwargs.get('repo_path', os.environ.get('REPO_PATH', '.'))
+        return FileStorage(repo_path)
     except Exception as e:
         logger.error(f"Error creating storage backend", exc_info=True)
         raise
