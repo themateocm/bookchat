@@ -117,29 +117,40 @@ class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
         super().__init__(*args, directory="static", **kwargs)
 
     def handle_error(self, error):
-        """Handle errors and return appropriate response"""
+        """Handle errors and return appropriate response
+        
+        This method provides centralized error handling for the server by:
+        1. Logging the error with full traceback
+        2. Handling broken pipe errors gracefully
+        3. Sending a JSON error response to the client
+        """
+        # Log the error with full stack trace for debugging
         error_msg = f"Error occurred: {str(error)}"
         logger.error(error_msg, exc_info=True)  # Include full stack trace
         
-        # Don't try to send error response for broken pipe errors
+        # Special case: BrokenPipeError occurs when client disconnects prematurely
+        # In this case, we can't send a response, so just log and return
         if isinstance(error, BrokenPipeError):
             logger.info("Client disconnected prematurely - suppressing broken pipe error")
             return
             
         try:
+            # Prepare JSON error response with error details and stack trace
             error_response = {
                 'error': str(error),
                 'traceback': traceback.format_exc()
             }
+            # Send 500 Internal Server Error response
             self.send_response(HTTPStatus.INTERNAL_SERVER_ERROR)
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
             self.wfile.write(json.dumps(error_response).encode('utf-8'))
         except (BrokenPipeError, ConnectionResetError) as e:
+            # Handle case where connection is lost while trying to send error response
             logger.info(f"Failed to send error response due to connection issue: {e}")
 
     def do_GET(self):
-        """Handle GET requests"""
+        """Handle GET requests for various endpoints including static files, messages, and public keys"""
         try:
             parsed_path = urlparse(self.path)
             path = parsed_path.path
@@ -147,28 +158,39 @@ class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
             client_address = self.client_address[0]
             logger.info(f"GET request from {client_address} to {path}")
             
-            # Wrap the entire response handling in a try-except block
+            # #todo: Add rate limiting for requests from same IP
+            # #todo: Add request validation/sanitization layer
             try:
+                # Main application routes
                 if path == '/':
+                    # #todo: Consider caching the index.html for better performance
                     logger.debug("Serving main page")
                     self.serve_file('templates/index.html', 'text/html')
                 elif path == '/messages':
+                    # #todo: Add pagination support for messages
                     logger.debug("Handling messages request")
                     self.serve_messages()
                 elif path == '/verify_username':
+                    # #todo: Add more robust username validation rules
                     logger.debug("Handling username verification")
                     self.verify_username()
                 elif path == '/status':
+                    # #todo: Add caching for status page with configurable TTL
                     self.serve_status_page()
+                    
+                # Public key handling
                 elif path.startswith('/public_key/'):
+                    # #todo: Add key expiration checking
                     key_name = path.split('/')[-1]
                     key_path = Path('identity/public_keys') / key_name
                     if key_path.exists() and key_path.suffix == '.pub':
                         self.serve_file(key_path, 'text/plain')
                     else:
                         self.send_error(HTTPStatus.NOT_FOUND)
+                        
+                # Individual message handling
                 elif path.startswith('/messages/'):
-                    # Serve individual message files
+                    # #todo: Add message access control
                     filename = path.split('/')[-1]
                     message_path = Path('messages') / filename
                     if message_path.exists() and message_path.is_file():
@@ -178,18 +200,30 @@ class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
                         self.wfile.write(message_path.read_bytes())
                     else:
                         self.send_error(HTTPStatus.NOT_FOUND, "Message file not found")
+                        
+                # Static file handling
                 elif path.startswith('/static/'):
-                    # Handle static files directly
                     try:
-                        # Remove the leading '/static/' to get the relative path
-                        file_path = path[8:]  # len('/static/') == 8
+                        file_path = path[8:]  # Remove '/static/' prefix
                         logger.debug(f"Serving static file: {file_path}")
                         with open(os.path.join('static', file_path), 'rb') as f:
                             content = f.read()
+                        
                         self.send_response(HTTPStatus.OK)
+                        # Basic content type detection
                         content_type = 'text/css' if file_path.endswith('.css') else 'application/javascript'
                         self.send_header('Content-Type', content_type)
                         self.send_header('Content-Length', str(len(content)))
+                        
+                        # Add caching headers
+                        # Cache static assets for 1 week (604800 seconds)
+                        self.send_header('Cache-Control', 'public, max-age=604800, immutable')
+                        # Provide ETag for cache validation
+                        etag = f'"{hash(content)}"'
+                        self.send_header('ETag', etag)
+                        # Add Vary header to handle different encodings
+                        self.send_header('Vary', 'Accept-Encoding')
+                        
                         self.end_headers()
                         self.wfile.write(content)
                         logger.debug(f"Successfully served static file: {file_path}")
@@ -199,8 +233,10 @@ class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
                     except Exception as e:
                         logger.error(f"Error serving file {file_path}: {e}")
                         self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR)
+                        
+                # Public keys directory handling
                 elif path.startswith('/identity/public_keys/'):
-                    # Serve public key files
+                    # #todo: Add security headers for key downloads
                     username = path.split('/')[-1].split('.')[0]
                     public_key_path = os.path.join(REPO_PATH, 'identity/public_keys', f'{username}.pub')
                     if os.path.exists(public_key_path):
@@ -211,10 +247,15 @@ class ChatRequestHandler(http.server.SimpleHTTPRequestHandler):
                             self.wfile.write(f.read().encode('utf-8'))
                     else:
                         self.send_error(HTTPStatus.NOT_FOUND, "Public key not found")
+                        
+                # Fallback to default handler
                 else:
+                    # #todo: Add custom 404 page
                     logger.info(f"Attempting to serve unknown path: {path}")
                     super().do_GET()
+                    
             except (BrokenPipeError, ConnectionResetError) as e:
+                # Common client disconnect scenarios - log but don't treat as error
                 logger.info(f"Client disconnected during response: {e}")
             except Exception as e:
                 logger.error(f"Error in GET request handler", exc_info=True)
