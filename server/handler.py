@@ -4,6 +4,7 @@ import json
 import logging
 import mimetypes
 import socket
+import traceback
 from http.server import SimpleHTTPRequestHandler
 from pathlib import Path
 from typing import Dict, Any
@@ -32,40 +33,32 @@ class ChatRequestHandler(SimpleHTTPRequestHandler):
 
     def handle_error(self, status_code: int, message: str) -> None:
         """Handle errors and return appropriate response.
-        
+
         This method provides centralized error handling for the server by:
         1. Logging the error with full traceback
         2. Handling broken pipe errors gracefully
         3. Sending a JSON error response to the client
-        
+
         Args:
             status_code: HTTP status code to return
             message: Error message to send to client
         """
         try:
-            # Log error with traceback
-            logger.error(f"Error {status_code}: {message}\n{traceback.format_exc()}")
+            error_trace = traceback.format_exc()
+            if error_trace != "NoneType: None\n":
+                logger.error(f"Error trace:\n{error_trace}")
             
-            # Don't send error response for broken pipe or connection reset
-            if isinstance(message, (BrokenPipeError, ConnectionResetError)):
-                logger.debug(f"Client disconnected: {message}")
-                return
-            
-            # Send error response
             self.send_response(status_code)
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
             
-            error_response = {
-                'error': {
-                    'code': status_code,
-                    'message': str(message)
-                }
-            }
-            self.wfile.write(json.dumps(error_response).encode('utf-8'))
+            error_response = json.dumps({'error': message}).encode('utf-8')
+            self.wfile.write(error_response)
             
+        except BrokenPipeError:
+            # Client disconnected, log and ignore
+            logger.info("Client disconnected while sending error response")
         except Exception as e:
-            # Last resort error handling
             logger.error(f"Error in error handler: {e}")
 
     def serve_file(self, filepath: str) -> None:
@@ -132,3 +125,6 @@ class ChatRequestHandler(SimpleHTTPRequestHandler):
                 serve_status_page(self)
             else:
                 self.serve_file(path.lstrip('/'))
+        except Exception as e:
+            logger.error(f"Error handling GET request: {e}")
+            self.handle_error(500, str(e))

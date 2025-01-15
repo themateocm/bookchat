@@ -24,6 +24,16 @@ def mock_handler():
     handler.send_header = MagicMock()
     handler.end_headers = MagicMock()
     handler.send_json_response = lambda data: send_json_response(handler, data)
+    
+    # Mock server and storage
+    mock_storage = MagicMock()
+    mock_storage.get_messages.return_value = ['test1.txt', 'test2.txt']
+    mock_storage.verify_username.return_value = True
+    
+    mock_server = MagicMock()
+    mock_server.storage = mock_storage
+    handler.server = mock_server
+    
     return handler
 
 def test_serve_messages(mock_handler, tmp_path):
@@ -72,6 +82,10 @@ def test_verify_username_invalid(mock_handler):
     # Create a proper query string with invalid username
     query = urlencode({'username': 'test/user'})
     mock_handler.path = f'/verify_username?{query}'
+    
+    # Update mock storage to return False for invalid username
+    mock_handler.server.storage.verify_username.return_value = False
+    
     verify_username(mock_handler)
     
     # Verify response headers
