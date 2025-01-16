@@ -53,13 +53,21 @@
         <!-- Message input -->
         <div class="message-form">
             <!-- No-JS message form -->
-            <form id="message-form" method="POST" action="/messages" class="message-input-container nojs-only">
+            <form id="message-form" class="message-input-container nojs-only">
                 <textarea name="content" placeholder="Type your message here..." rows="1" required></textarea>
                 <button type="submit">Send</button>
             </form>
             <!-- JS message form -->
             <form id="js-message-form" class="message-input-container js-only">
-                <textarea id="message-input" placeholder="Type your message here..." rows="1" required></textarea>
+                <div class="message-input-wrapper">
+                    <textarea 
+                        id="message-input" 
+                        name="message" 
+                        placeholder="Type a message..." 
+                        required
+                    ></textarea>
+                    <div id="char-counter" class="char-counter">0 characters</div>
+                </div>
                 <button type="submit" id="send-button">Send</button>
             </form>
         </div>

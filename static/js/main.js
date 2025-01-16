@@ -398,57 +398,39 @@ function setupMessageInput() {
     
     const messageForm = document.getElementById('js-message-form');
     const messageInput = document.getElementById('message-input');
-    
-    if (messageForm && messageInput) {
-        // Function to validate and send message
-        const validateAndSendMessage = async (content) => {
-            // Ensure content is a string and properly trimmed
-            content = String(content || '').trim();
-            
-            if (!content) {
-                console.log('Empty content detected, preventing submission');
-                messageInput.classList.add('error');
-                setTimeout(() => messageInput.classList.remove('error'), 2000);
-                return false;
-            }
+    const charCounter = document.getElementById('char-counter');
 
-            // Clear input immediately
-            const originalContent = content;
-            messageInput.value = '';
-            
-            try {
-                await sendMessage(originalContent);
-                return true;
-            } catch (error) {
-                console.error('Failed to send message:', error);
-                messageInput.value = originalContent;
-                messageInput.classList.add('error');
-                setTimeout(() => messageInput.classList.remove('error'), 2000);
-                
-                // Show error message to user
-                const errorDiv = document.createElement('div');
-                errorDiv.className = 'error-message';
-                errorDiv.textContent = 'Failed to send message. Please try again.';
-                messageForm.appendChild(errorDiv);
-                setTimeout(() => errorDiv.remove(), 3000);
-                return false;
-            }
-        };
-
-        // Handle form submit (for button click)
-        messageForm.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            await validateAndSendMessage(messageInput.value);
-        });
-        
-        // Handle Enter key press (Shift+Enter for new line)
-        messageInput.addEventListener('keydown', async (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                await validateAndSendMessage(messageInput.value);
-            }
-        });
+    // Update character count
+    function updateCharCount() {
+        const count = messageInput.value.length;
+        charCounter.textContent = `${count} character${count !== 1 ? 's' : ''}`;
     }
+
+    // Add input event listener for character counting
+    messageInput.addEventListener('input', updateCharCount);
+
+    messageForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const content = messageInput.value.trim();
+        if (content) {
+            await sendMessage(content);
+            messageInput.value = '';
+            updateCharCount(); // Reset counter after sending
+        }
+    });
+
+    // Enable textarea resizing and submit on Enter (Shift+Enter for new line)
+    messageInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            const content = messageInput.value.trim();
+            if (content) {
+                sendMessage(content);
+                messageInput.value = '';
+                updateCharCount(); // Reset counter after sending
+            }
+        }
+    });
 }
 
 // Update global verification status based on all messages
